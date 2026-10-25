@@ -220,8 +220,9 @@ lina settings set rea on
 
 This applies to both agents from their next turn. LINA inherits only the `rea`
 server; other personal MCP servers and plugins stay disabled. Full-access developers get the
-REA toolset; reviewers and restricted developers get REA's declared read-only
-evidence tools. REA
+REA toolset; reviewers and restricted developers get static inspection tools,
+including opening binaries/APKs and reading decompilation evidence. Target changes,
+target execution, exports and REA settings writes stay outside that analysis profile. REA
 launches with the daemon's Node runtime rather than a different version from a
 shell PATH. For REA 6.8, use Node 22.23.4+, 24.22.1+ or 26.12.1+ in its supported
 release lines. Enabling this setting does not install REA or analysis engines.

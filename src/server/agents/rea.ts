@@ -5,9 +5,33 @@ import { dirname, delimiter, join, basename } from 'node:path';
 import { execText, which } from './proc.js';
 import type { AgentId } from '../../shared/types.js';
 export interface ReaServer { command: string; args: string[]; env?: Record<string, string>; cwd?: string }
-// REA 6.8 declares these operations readOnlyHint=true in tools/list. Other tools
-// may create analysis artifacts, change settings or control targets.
-export const REA_READ_TOOLS = ['inspect_analysis_settings', 'gdb_session_status', 'evaluate_reconstruction_coverage', 'get_evidence_bundle', 'list_unknowns', 'verify_unknown_resolution'];
+// Static inspection can create provider caches without modifying the target.
+// REA's broad readOnlyHint excludes even binary_session, so use an explicit
+// analysis profile instead. No target execution, annotations, exports or settings writes.
+export const REA_READ_TOOLS = [
+  'inspect_analysis_settings', 'binary_session', 'open_binary',
+  'get_navigation_context', 'inspect_address_context',
+  'list_documents', 'list_names', 'list_procedures', 'list_segments', 'list_strings',
+  'address_name', 'current_address', 'current_procedure', 'current_document',
+  'procedure_address', 'procedure_assembly', 'procedure_callees', 'procedure_callers',
+  'procedure_info', 'procedure_references', 'procedure_pseudo_code',
+  'read_function_instructions', 'read_bytes', 'address_to_file_offset',
+  'resolve_containing_procedure', 'resolve_native_call_targets',
+  'search_bytes', 'search_procedures', 'search_strings', 'xrefs',
+  'get_objc_classes', 'get_objc_protocols', 'batch_decompile', 'get_call_graph',
+  'binary_overview', 'analyze_function', 'find_xrefs_to_name',
+  'inspect_native_load_image', 'inspect_native_data_type', 'inspect_native_instruction',
+  'inspect_managed_artifact', 'inspect_managed_members', 'inspect_managed_native_boundaries',
+  'inspect_byte_entropy', 'inspect_analysis_view', 'inspect_pe_resources',
+  'inspect_native_exports', 'inspect_elf_notes', 'inspect_apk_signature',
+  'identify_flutter_build', 'inspect_dart_aot', 'inspect_electron_fuses',
+  'inspect_android_package', 'search_android_classes', 'inspect_android_class',
+  'inspect_android_method', 'trace_android_references', 'project_android_application_graph',
+  'inspect_apktool_client', 'decode_android_resources',
+  'get_evidence_bundle', 'list_unknowns', 'verify_unknown_resolution',
+  'evaluate_reconstruction_coverage', 'compare_managed_members',
+  'compare_artifacts', 'compare_functions', 'compare_bundles',
+];
 export async function normalizeRea(server: ReaServer): Promise<ReaServer> {
   const command = await which(server.command);
   if (!command) throw new Error('Configured REA executable was not found. Check the REA MCP registration.');
@@ -48,5 +72,6 @@ export function reaCodexArgs(server: ReaServer, readOnly: boolean): string[] {
   if (!readOnly) delete values.enabled_tools;
   if (server.cwd) values.cwd = server.cwd;
   return [...Object.entries(values).flatMap(([key,value]) => ['-c', `mcp_servers.rea.${key}=${JSON.stringify(value)}`]),
+    ...(readOnly ? REA_READ_TOOLS.flatMap((tool) => ['-c', `mcp_servers.rea.tools.${tool}.approval_mode="approve"`]) : []),
     ...Object.entries(server.env ?? {}).flatMap(([key,value]) => ['-c', `mcp_servers.rea.env.${JSON.stringify(key)}=${JSON.stringify(value)}`])];
 }

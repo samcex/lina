@@ -16,10 +16,19 @@ it('pins Node-based REA launches to the daemon runtime and preserves configured 
     expect(server.env?.REA_EXAMPLE).toBe('value');
   } finally { rmSync(dir,{recursive:true,force:true}); }
 });
-it('generates scalar TOML overrides and confines Codex reviewers to declared read-only REA tools', () => {
+it('generates scalar TOML overrides and confines Codex reviewers to static analysis REA tools', () => {
   const server={command:'/node',args:['/rea.mjs','mcp'],env:{PATH:'/bin','EXAMPLE.KEY':'quoted " value'}};
   const args=reaCodexArgs(server,true);
   expect(args).toContain('mcp_servers.rea.enabled=true');
+  expect(REA_READ_TOOLS).toContain('binary_session');
+  expect(REA_READ_TOOLS).toContain('open_binary');
+  expect(REA_READ_TOOLS).toContain('inspect_android_package');
+  expect(REA_READ_TOOLS).toContain('inspect_android_method');
+  expect(REA_READ_TOOLS).not.toContain('install_adb_package');
+  expect(REA_READ_TOOLS).not.toContain('decompile_all');
+  expect(REA_READ_TOOLS).not.toContain('update_analysis_settings');
+  expect(REA_READ_TOOLS).not.toContain('start_frida_session');
+  expect(args).toContain('mcp_servers.rea.tools.binary_session.approval_mode="approve"');
   expect(args).toContain('mcp_servers.rea.env."EXAMPLE.KEY"="quoted \\" value"');
   expect(args).toContain('mcp_servers.rea.enabled_tools='+JSON.stringify(REA_READ_TOOLS));
   expect(args.some(a=>a.startsWith('mcp_servers.rea.env='))).toBe(false);

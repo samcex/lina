@@ -205,7 +205,7 @@ export function settingsLines(s: Settings): string[] {
     k('developer', name(s.developer), 'implements in pair/architect/solo; leads in parallel'),
     k('max-rounds', String(s.maxRounds)),
     k('team', s.team ? fg(C.text)(formatTeamSpec(s.team)) : dim('(not set)'), s.team ? teamSummary(s.team) : 'custom sessions default to: dev plans, the other agent critiques and reviews'),
-    k('rea', s.reaEnabled ? 'on' : 'off', 'configured REA MCP for both agents; reviewers get read-only evidence tools'),
+    k('rea', s.reaEnabled ? 'on' : 'off', 'configured REA MCP for both agents; reviewers get static analysis tools'),
     k('access', bold(s.accessMode), 'developer filesystem, commands and network; applies from the next turn'),
     k('test-sandbox', bold(s.testSandbox ?? 'auto'), s.accessMode === 'full' ? 'inactive with full access' : SANDBOX_HINT[s.testSandbox ?? 'auto']),
     k('claude-sandbox', bold(s.claudeSandbox ?? 'auto'), s.accessMode === 'full' ? 'inactive for full-access developer turns' : 'OS sandbox for Claude\'s Bash tool'),
