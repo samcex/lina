@@ -1,4 +1,5 @@
 // Claude Code adapter: drives `claude -p --output-format stream-json`.
+import { configuredRea, REA_READ_TOOLS, type ReaServer } from './rea.js';
 import { dirname } from 'node:path';
 import type { Effort, RateLimitInfo, UsageTotals } from '../../shared/types.js';
 import type { AgentAdapter, AgentStreamEvent, TurnError, TurnOptions, TurnResult } from './types.js';
@@ -41,7 +42,7 @@ export function claudeEffort(e?: Effort): string | undefined {
 }
 
 /** Builds the argv (without the binary). The prompt goes to stdin. */
-export function buildClaudeArgs(opts: Pick<TurnOptions, 'model' | 'effort' | 'resumeId' | 'systemPrompt' | 'access' | 'fullAccess' | 'network' | 'extraReadDirs' | 'images' | 'osSandbox'>): string[] {
+export function buildClaudeArgs(opts: Pick<TurnOptions, 'model' | 'effort' | 'resumeId' | 'systemPrompt' | 'access' | 'fullAccess' | 'network' | 'extraReadDirs' | 'images' | 'osSandbox'>, rea?: ReaServer): string[] {
   const args = ['-p', '--output-format', 'stream-json', '--verbose', '--include-partial-messages', '--model', opts.model];
   const effort = claudeEffort(opts.effort);
   if (effort) args.push('--effort', effort);
@@ -67,6 +68,13 @@ export function buildClaudeArgs(opts: Pick<TurnOptions, 'model' | 'effort' | 're
     args.push('--tools', REVIEW_TOOLS.join(','));
     args.push('--allowedTools', ...REVIEW_ALLOW);
     args.push('--disallowedTools', ...REVIEW_DENY);
+  }
+  if (rea) {
+    args.push('--mcp-config', JSON.stringify({ mcpServers: { rea } }));
+    const tools = !full ? REA_READ_TOOLS.map((name) => `mcp__rea__${name}`) : ['mcp__rea__*'];
+    const allow = args.indexOf('--allowedTools');
+    if (allow >= 0) args.splice(allow + 1, 0, ...tools);
+    else args.push('--allowedTools', ...tools);
   }
   const dirs = new Set<string>(opts.extraReadDirs ?? []);
   for (const img of opts.images ?? []) dirs.add(dirname(img));
@@ -309,9 +317,10 @@ export class ClaudeAdapter implements AgentAdapter {
     const emit = (evs: AgentStreamEvent[]) => {
       for (const e of evs) { try { onEvent(e); } catch { /* consumer errors must not kill the turn */ } }
     };
+    const rea = opts.reaEnabled ? await configuredRea('claude') : undefined;
     const proc = await runProcess({
       cmd: this.bin,
-      args: buildClaudeArgs(opts),
+      args: buildClaudeArgs(opts, rea),
       cwd: opts.cwd,
       env: agentEnv(opts.sessionId ? { LINA_SESSION_ID: opts.sessionId } : undefined),
       stdin: claudePrompt(opts.prompt, opts.images),

@@ -1661,6 +1661,7 @@ Do not report completion if verification is missing.`,
       try {
         result = await adapter.runTurn({
           sessionId: this.id,
+          reaEnabled: settings.reaEnabled,
           prompt: [spec.prompt, P.conversationContext(cwd, this.deps.db.recentConversation(this.id, agent)
             .filter((message) => !this.competing || phase !== 'implementing' || message.agent === 'user' || message.agent === agent)), this.state.undoNotice].filter(Boolean).join('\n\n'),
           cwd,
@@ -1670,7 +1671,7 @@ Do not report completion if verification is missing.`,
           fullAccess,
           network: fullAccess || !!this.cfg.network,
           resumeId,
-          systemPrompt: role === 'developer' ? `${P.developerSystemPrompt(this.direct)}\n${P.previewInstructions(this.id)}` : P.reviewerSystemPrompt(),
+          systemPrompt: (role === 'developer' ? `${P.developerSystemPrompt(this.direct)}\n${P.previewInstructions(this.id)}` : P.reviewerSystemPrompt()) + (settings.reaEnabled ? '\nREA MCP is enabled for this turn. Use its available MCP tools directly rather than treating /rea as a shell command. Reviewers have only declared read-only evidence tools; ask the developer to produce any additional analysis evidence you need.' : ''),
           extraReadDirs: existsSync(attDir) ? [attDir] : undefined,
           images: images.length ? images : undefined,
           osSandbox: agent === 'claude' ? (fullAccess ? false : await this.claudeSandbox(settings, mock)) : undefined,

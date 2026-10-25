@@ -209,6 +209,23 @@ Active goals also resume automatically after a daemon restart. `/goal` shows
 its objective and status. Use `/pause`, `/resume` and `/cancel` to control it.
 Normal review-round limits, unresolved findings and isolated-workspace approvals apply.
 
+## REA tools
+
+To use an existing REA MCP registration from Codex or Claude Code:
+
+```bash
+lina settings set rea on
+# Disable again: lina settings set rea off
+```
+
+This applies to both agents from their next turn. LINA inherits only the `rea`
+server; other personal MCP servers and plugins stay disabled. Full-access developers get the
+REA toolset; reviewers and restricted developers get REA's declared read-only
+evidence tools. REA
+launches with the daemon's Node runtime rather than a different version from a
+shell PATH. For REA 6.8, use Node 22.23.4+, 24.22.1+ or 26.12.1+ in its supported
+release lines. Enabling this setting does not install REA or analysis engines.
+
 ## Inspect and undo writing turns
 
 In the web inspector's **Changes** tab, select a writing turn to inspect its exact diff,
@@ -328,7 +345,7 @@ defaults.
   agent can't plant filters, diff drivers or `include.path` for LINA to execute.
 * **Personal customizations stay out.** Your personal Claude plugins, hooks, skills and MCP
   servers are excluded from agent runs; the project's own CLAUDE.md is kept. Codex runs with
-  your MCP servers and plugins disabled. This saves tokens and avoids side effects.
+  your MCP servers and plugins disabled, except explicitly enabled REA above. This saves tokens and avoids side effects.
 * **Daemon access.** It listens on 127.0.0.1 only, with a bearer token in
   `~/.lina/daemon.json` (mode 0600), plus Host and Origin checks.
 * **Redaction.** Logs and stored tool output pass through a secret redactor.

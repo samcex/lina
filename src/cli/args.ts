@@ -296,7 +296,7 @@ export function validateCommand(p: ParsedArgs): void {
 }
 
 // ── `lina settings set <key> <value>` ─────────────────────────────────────────
-export const SETTING_KEYS = ['access', 'mode', 'developer', 'max-rounds', 'team', 'test-sandbox', 'claude-sandbox'] as const;
+export const SETTING_KEYS = ['rea', 'access', 'mode', 'developer', 'max-rounds', 'team', 'test-sandbox', 'claude-sandbox'] as const;
 export type SettingKey = (typeof SETTING_KEYS)[number];
 
 /** Validates one `lina settings set` pair and returns the Settings patch it stands for. */
@@ -309,6 +309,7 @@ export function parseSettingValue(rawKey: string, value: string): { key: Setting
     throw new ArgError(`Unknown setting: ${rawKey}`, `Settings: ${SETTING_KEYS.join(', ')}${near ? ` (did you mean "${near}"?)` : ''}`);
   }
   switch (key) {
+    case 'rea': return { key, patch: { reaEnabled: oneOf('rea', value, ['on', 'off']) === 'on' } };
     case 'access': return { key, patch: { accessMode: oneOf('access', value, ['full', 'restricted']) } };
     case 'mode': return { key, patch: { defaultMode: oneOf('mode', value, CLI_MODES) } };
     case 'developer': return { key, patch: { developer: oneOf('developer', value, AGENTS) } };

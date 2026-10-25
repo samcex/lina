@@ -205,6 +205,7 @@ export function settingsLines(s: Settings): string[] {
     k('developer', name(s.developer), 'implements in pair/architect/solo; leads in parallel'),
     k('max-rounds', String(s.maxRounds)),
     k('team', s.team ? fg(C.text)(formatTeamSpec(s.team)) : dim('(not set)'), s.team ? teamSummary(s.team) : 'custom sessions default to: dev plans, the other agent critiques and reviews'),
+    k('rea', s.reaEnabled ? 'on' : 'off', 'configured REA MCP for both agents; reviewers get read-only evidence tools'),
     k('access', bold(s.accessMode), 'developer filesystem, commands and network; applies from the next turn'),
     k('test-sandbox', bold(s.testSandbox ?? 'auto'), s.accessMode === 'full' ? 'inactive with full access' : SANDBOX_HINT[s.testSandbox ?? 'auto']),
     k('claude-sandbox', bold(s.claudeSandbox ?? 'auto'), s.accessMode === 'full' ? 'inactive for full-access developer turns' : 'OS sandbox for Claude\'s Bash tool'),
@@ -222,7 +223,7 @@ export async function cmdSettings(a: ParsedArgs) {
     if (ignored.length) {
       throw new CliError(`The daemon did not store ${key}.`, `It may be older than this CLI — run \`lina daemon restart\` when no session is running, then try again.`);
     }
-    out(`${fg(C.ok)('✔')} ${key} saved — ${key === 'access' ? 'applies from the next agent turn' : 'applies to new sessions'}.`);
+    out(`${fg(C.ok)('✔')} ${key} saved — ${['access', 'rea'].includes(key) ? 'applies from the next agent turn' : 'applies to new sessions'}.`);
     out();
     for (const l of settingsLines(next)) out(l);
     return;

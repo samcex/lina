@@ -1,5 +1,5 @@
 import React from 'react';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { PassThrough, Writable } from 'node:stream';
 import { render, renderToString } from 'ink';
 import { applyEvent, viewFromSnapshot } from '../../src/shared/reducer.js';
@@ -156,7 +156,7 @@ describe('App (Ink)', () => {
     stdin.write('Please add tests'); await tick();
     stdin.write('\r'); await tick(100);
     expect(calls.some((c) => c.startsWith('send') && c.includes('Please add tests'))).toBe(true);
-    expect(stdout.text).toContain('Queued');
+    await vi.waitFor(() => expect(stdout.text).toContain('Queued'), { timeout: 2000 });
 
     // /approve merge → approval call; unknown command → inline error
     stdin.write('/approve merge'); await tick(); stdin.write('\r'); await tick(100);

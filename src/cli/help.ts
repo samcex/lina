@@ -47,7 +47,7 @@ ${h('Usage')}
   ${c('lina models set')} <codex|claude> <model> [--effort low|medium|high|xhigh|max]
                                     Set the default model (and effort) for an agent
   ${c('lina settings')} [--json]          Show the defaults for new sessions (mode, team, sandboxes…)
-  ${c('lina settings set')} <key> <value>   access (full|restricted) | mode | developer | max-rounds | team | test-sandbox | claude-sandbox
+  ${c('lina settings set')} <key> <value>   access (full|restricted) | rea (on|off) | mode | developer | max-rounds | team | test-sandbox | claude-sandbox
   ${c('lina doctor')} [--live]              Check CLIs, auth, sandbox, git (--live runs real probes)
   ${c('lina daemon')} start|stop|restart|status|run|logs [-f] [-n N]
                                     Manage the background daemon (agents keep running in it)

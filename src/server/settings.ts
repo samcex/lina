@@ -71,6 +71,10 @@ export function putSettings(db: Db, patch: Partial<Settings>): Settings {
   if (!patch || typeof patch !== 'object') throw new LinaError('Body must be an object', 'invalid');
   const cur = getSettings(db);
   const next: Settings = { ...cur };
+  if (patch.reaEnabled !== undefined) {
+    if (typeof patch.reaEnabled !== 'boolean') throw new LinaError('reaEnabled must be boolean', 'invalid');
+    next.reaEnabled = patch.reaEnabled;
+  }
   if (patch.accessMode !== undefined) {
     if (!['full', 'restricted'].includes(patch.accessMode)) throw new LinaError('accessMode must be full|restricted', 'invalid');
     next.accessMode = patch.accessMode;

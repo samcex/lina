@@ -4,6 +4,7 @@ import type { AgentAdapter, AgentStreamEvent, TurnError, TurnOptions, TurnResult
 import { agentEnv, execText, runProcess } from './proc.js';
 import { classifyCommand, displayPath, oneLine } from './classify.js';
 import { classifyError, unwrapJsonError } from './errors.js';
+import { configuredRea, reaCodexArgs } from './rea.js';
 import { redact, redactTail } from './redact.js';
 
 export interface CodexArgOptions extends Pick<TurnOptions, 'cwd' | 'model' | 'effort' | 'resumeId' | 'systemPrompt' | 'access' | 'fullAccess' | 'network' | 'images'> {}
@@ -222,7 +223,12 @@ export class CodexAdapter implements AgentAdapter {
     const emit = (evs: AgentStreamEvent[]) => {
       for (const e of evs) { try { onEvent(e); } catch { /* ignore consumer errors */ } }
     };
-    const isolation = this.isolate ? await codexIsolationArgs(this.bin) : [];
+    let isolation = this.isolate ? await codexIsolationArgs(this.bin) : [];
+    if (opts.reaEnabled) {
+      const rea = await configuredRea('codex', this.bin);
+      isolation = isolation.filter((value, index, all) => value !== 'mcp_servers.rea.enabled=false' && !(value === '-c' && all[index + 1] === 'mcp_servers.rea.enabled=false'));
+      isolation.push(...reaCodexArgs(rea, opts.access === 'read' || opts.fullAccess !== true));
+    }
     const proc = await runProcess({
       cmd: this.bin,
       args: buildCodexArgs(opts, isolation),

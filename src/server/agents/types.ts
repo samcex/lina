@@ -4,6 +4,8 @@ import type {
 } from '../../shared/types.js';
 
 export interface TurnOptions {
+  /** Selectively inherit the configured REA MCP server. */
+  reaEnabled?: boolean;
   sessionId?: string;
   prompt: string;
   /** Working directory: the project or the session's isolated workspace. */
