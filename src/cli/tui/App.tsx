@@ -171,7 +171,7 @@ export function App({ store, cwd, initial, onQuit, openUrl, size }: AppProps) {
       case 'resume': {
         if (a.selector) { void store.resumeSession(a.selector); break; }
         const current = store.getState().view?.session;
-        if (current && ['paused','interrupted','failed','cancelled'].includes(current.status)) void store.control('resume');
+        if (current && (['paused','interrupted','failed','cancelled'].includes(current.status) || (current.status === 'idle' && current.config.goal))) void store.control('resume');
         else { setSessionPicker('resume'); setOverlay('sessions'); }
         break;
       }

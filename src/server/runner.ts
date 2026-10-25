@@ -1315,7 +1315,7 @@ LINA_GOAL_CONTINUE: <concrete remaining work within the goal>
 LINA_GOAL_BLOCKED: <specific missing owner decision or external prerequisite>
 Do not report completion if verification is missing.`,
     });
-    this.agentMessage(reviewer, 'reviewer', r, r.text.trim(), 'review');
+    this.agentMessage(reviewer, 'reviewer', r, r.text.replace(/^LINA_GOAL_(?:COMPLETE|CONTINUE:.*|BLOCKED:.*)[ \t]*$/gm, '').trim() || 'Goal assessment returned.', 'review');
     const status = /^(LINA_GOAL_COMPLETE|LINA_GOAL_CONTINUE:|LINA_GOAL_BLOCKED:)[ \t]*(.*)$/gm;
     const matches = [...r.text.matchAll(status)];
     if (matches.length !== 1) return stop('The goal check did not return a clear completion or continuation result.');

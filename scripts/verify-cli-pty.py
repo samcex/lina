@@ -160,7 +160,15 @@ const project=(await api.projects())[0];console.log(JSON.stringify(await api.cre
         terminal = Terminal('attach', sessions[0]['id'])
         terminal.expect('● live')
         terminal.command('/goal Build hello')
-        terminal.expect('Goal complete: independently checked', timeout=30)
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline:
+            terminal.read(.1)
+            goal_sessions = json.loads(cli('sessions', '--all', '--json'))
+            goals = [s for s in goal_sessions if s['config'].get('goal') == 'Build hello']
+            if len(goals) == 1 and goals[0].get('goalStatus') == 'complete':
+                break
+        else:
+            raise AssertionError('The terminal /goal command did not finish with an independent completion check')
         terminal.command('/goal')
         terminal.expect('Goal: Build hello')
         goal_sessions = json.loads(cli('sessions', '--all', '--json'))

@@ -225,7 +225,7 @@ export class TuiStore {
       const target = matches[0];
       await this.openSession(target.id);
       const current = this.state.view?.session;
-      if (current?.id === target.id && ['paused', 'interrupted', 'failed', 'cancelled'].includes(current.status)) await this.control('resume');
+      if (current?.id === target.id && (['paused', 'interrupted', 'failed', 'cancelled'].includes(current.status) || (current.status === 'idle' && current.config.goal))) await this.control('resume');
     } catch (e) { this.fail(e, 'Could not reopen conversation'); }
   }
 
