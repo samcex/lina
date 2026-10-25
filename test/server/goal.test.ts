@@ -23,6 +23,23 @@ async function status(id: string, value: string) {
   await waitUntil(async () => (await api.session(id)).session.status === value, 20_000);
   return api.session(id);
 }
+it('starts a full goal workflow when its objective begins with agent mentions', async () => {
+  const s = await goal();
+  const objective = '@codex @claude Make a plan, discuss it, then build hello';
+  await api.updateSession(s.id, { config: { goal: objective } });
+  await api.send(s.id, objective);
+  expect((await status(s.id, 'completed')).session.goalStatus).toBe('complete');
+  const calls = mockCalls.filter((c) => c.opts.cwd === s.workspacePath);
+  expect(calls.some((c) => c.step === 'plan' && c.prompt.includes(objective))).toBe(true);
+  expect(calls.some((c) => c.step === 'plan_review')).toBe(true);
+  expect(calls.some((c) => c.step === 'goal_check')).toBe(true);
+  expect(calls.some((c) => c.step === 'consult')).toBe(false);
+});
+it('can resume a legacy idle goal that has not entered its workflow', async () => {
+  const s = await goal();
+  await api.control(s.id, 'resume');
+  expect((await status(s.id, 'completed')).session.goalStatus).toBe('complete');
+});
 it('automatically continues remaining goal work without another owner message', async () => {
   const s = await goal('goal-continue');
   await api.send(s.id, 'Build hello');

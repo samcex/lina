@@ -434,7 +434,9 @@ export class SessionManager {
     const r = this.runner(id);
     if (!body || typeof body.text !== 'string' || !body.text.trim()) throw new LinaError('text is required', 'invalid');
     const raw = body.text.trim();
-    const m = /^@(codex|claude)\b[:,]?\s*/i.exec(raw);
+    // A saved goal is a team objective, even when its text starts with @mentions.
+    const startingGoal = !!r.session.config.goal && r.state.step === 'idle' && !r.state.task;
+    const m = startingGoal ? null : /^@(codex|claude)\b[:,]?\s*/i.exec(raw);
     const mention = m ? (m[1].toLowerCase() as AgentId) : undefined;
     const text = m ? raw.slice(m[0].length).trim() || raw : raw;
     const atts: Attachment[] = [];

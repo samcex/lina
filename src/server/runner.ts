@@ -423,6 +423,8 @@ export class SessionRunner {
     if (this.loop) return;
     this.state.automaticDisabled = false;
     this.deps.assertCanStart?.();
+    // Recover goals stranded by older versions routing the initial @mention as a consult.
+    if (this.cfg.goal && this.state.step === 'idle' && !this.state.task) { this.startTask(this.cfg.goal); return; }
     const st = this.session.status;
     if (st === 'failed' && this.state.failedStep) this.state.step = this.state.failedStep; // keeps state.done: retry skips finished units
     if (['paused', 'interrupted', 'cancelled', 'failed'].includes(st)) this.start();
@@ -1445,7 +1447,7 @@ Do not report completion if verification is missing.`,
       prompt: P.consultPrompt({ text: c.text, attachments: c.attachments, task: this.state.task, primed: !!this.state.primed[key], role }),
       deliver: this.pendingFor(c.agent).filter((m) => m.target === c.agent), extraAttachments: c.attachments, variant: wt,
     });
-    const answer = this.conversational && role === 'developer' ? P.parseChatReply(r.text, !!r.change?.files.length) : { text: r.text.trim(), handoff: undefined, review: undefined };
+    const answer = role === 'developer' ? P.parseChatReply(r.text, !!r.change?.files.length) : { text: r.text.trim(), handoff: undefined, review: undefined };
     this.agentMessage(c.agent, role, r, answer.text, 'chat', wt);
     if (role === 'developer') await this.checkpoint('LINA: consult', wt);
     const consultBase = this.state.consultBase;
