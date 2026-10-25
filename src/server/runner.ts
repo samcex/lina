@@ -371,7 +371,7 @@ export class SessionRunner {
     this.deps.assertCanStart?.();
     if (!this.state.task) return this.startTask(text, attachments);
     if (this.conversational) return this.startTask(text, attachments);
-    if (this.cfg.goal) this.state.goalStatus = 'working';
+    if (this.cfg.goal) { this.state.goalStatus = 'working'; this.state.automaticDisabled = false; }
     this.state.revisionRequest = text;
     this.state.revisionAttachments = attachments?.length ? attachments : undefined;
     this.resetForRevision();

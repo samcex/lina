@@ -322,7 +322,8 @@ export class TuiStore {
       return;
     }
     // A dedicated conversation preserves the current task and its settings/history.
-    const config = { ...this.currentConfig(), goal: objective, mode: 'architect' as const, reviewer: this.currentConfig().developer === 'codex' ? 'claude' as const : 'codex' as const, interactionMode: 'workflow' as const, stepMode: false };
+    const developer = this.currentConfig().developer ?? this.state.settings?.developer ?? 'claude';
+    const config = { ...this.currentConfig(), developer, goal: objective, mode: 'architect' as const, reviewer: developer === 'codex' ? 'claude' as const : 'codex' as const, interactionMode: 'workflow' as const, stepMode: false };
     await this.createSession(objective, config);
   }
 

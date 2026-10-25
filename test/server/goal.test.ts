@@ -51,6 +51,16 @@ it('recovers an active goal after restart without a manual resume', async () => 
   await srv.close(); holds.delete(s.id); await boot();
   expect((await status(s.id, 'completed')).session.goalStatus).toBe('complete');
 });
+it('continues a blocked goal after the owner supplies the decision and resumes', async () => {
+  const s = await goal('goal-blocked');
+  await api.send(s.id, 'Build hello');
+  await status(s.id, 'paused');
+  scenarios.set(s.id, 'default');
+  await api.send(s.id, 'Use the existing local deployment target.');
+  await api.control(s.id, 'resume');
+  expect((await status(s.id, 'completed')).session.goalStatus).toBe('complete');
+  expect(srv.manager.db.getSessionState<{ automaticDisabled?: boolean }>(s.id)?.automaticDisabled).toBe(false);
+});
 it('validates goal settings instead of silently ignoring them', async () => {
   const project = await api.addProject({ path: makeRepo() });
   await expect(api.createSession({ projectId: project.id, config: { goal: '   ', interactionMode: 'workflow' } })).rejects.toThrow();
