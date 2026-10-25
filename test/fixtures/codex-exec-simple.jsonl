@@ -1,0 +1,6 @@
+{"type":"thread.started","thread_id":"01a16b17-e7c4-75a0-a7a0-9755aa460028"}
+{"type":"turn.started"}
+{"type":"item.started","item":{"id":"item_0","type":"command_execution","command":"/bin/bash -lc \"printf 'hi' > hello.txt && cat hello.txt\"","aggregated_output":"","exit_code":null,"status":"in_progress"}}
+{"type":"item.completed","item":{"id":"item_0","type":"command_execution","command":"/bin/bash -lc \"printf 'hi' > hello.txt && cat hello.txt\"","aggregated_output":"hi","exit_code":0,"status":"completed"}}
+{"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":"Created `hello.txt`; `cat hello.txt` printed `hi`."}}
+{"type":"turn.completed","usage":{"input_tokens":34137,"cached_input_tokens":29440,"cache_write_input_tokens":0,"output_tokens":61,"reasoning_output_tokens":0}}

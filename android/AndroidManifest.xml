@@ -1,0 +1,16 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="app.lina.android" android:versionCode="5" android:versionName="0.4.0">
+  <uses-sdk android:minSdkVersion="26" android:targetSdkVersion="36" />
+  <uses-permission android:name="android.permission.INTERNET" />
+  <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+  <application android:label="LINA" android:icon="@drawable/lina_icon" android:theme="@style/LinaTheme"
+    android:allowBackup="false" android:fullBackupContent="false" android:debuggable="false"
+    android:networkSecurityConfig="@xml/network_security_config" android:dataExtractionRules="@xml/data_extraction_rules" android:supportsRtl="true">
+    <activity android:name=".AdvancedWebActivity" android:exported="false" android:windowSoftInputMode="adjustResize" />
+    <activity android:name=".MainActivity" android:configChanges="keyboardHidden|orientation|screenSize|screenLayout" android:exported="true" android:windowSoftInputMode="adjustResize">
+      <intent-filter>
+        <action android:name="android.intent.action.MAIN" />
+        <category android:name="android.intent.category.LAUNCHER" />
+      </intent-filter>
+    </activity>
+  </application>
+</manifest>

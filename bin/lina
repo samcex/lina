@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# LINA launcher. Resolves its own install dir so it works through symlinks.
+SOURCE="${BASH_SOURCE[0]}"
+while [ -L "$SOURCE" ]; do DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"; SOURCE="$(readlink "$SOURCE")"; [[ $SOURCE != /* ]] && SOURCE="$DIR/$SOURCE"; done
+ROOT="$(cd -P "$(dirname "$SOURCE")/.." && pwd)"
+exec node --disable-warning=ExperimentalWarning --enable-source-maps "$ROOT/dist/lina.js" "$@"

@@ -1,0 +1,14 @@
+node_modules/
+dist/
+*.log
+.vite/
+__pycache__/
+
+android/.local/
+*.keystore
+*.jks
+*.apk
+.env
+.env.*
+Agents.md
+CLAUDE.md

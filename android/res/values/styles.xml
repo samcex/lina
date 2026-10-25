@@ -1,0 +1,28 @@
+<resources>
+  <style name="LinaTheme" parent="android:style/Theme.Material.NoActionBar">
+    <item name="android:fontFamily">sans-serif</item>
+    <item name="android:colorAccent">#c1b2fa</item>
+    <item name="android:colorControlHighlight">#26c1b2fa</item>
+    <item name="android:colorButtonNormal">#23252d</item>
+    <item name="android:colorBackground">#101115</item>
+    <item name="android:textColorPrimary">#f0f0f5</item>
+    <item name="android:textColorSecondary">#9497a4</item>
+    <item name="android:windowBackground">#101115</item>
+    <item name="android:statusBarColor">#101115</item>
+    <item name="android:navigationBarColor">#101115</item>
+    <item name="android:windowLightStatusBar">false</item>
+    <item name="android:windowLightNavigationBar">false</item>
+    <item name="android:alertDialogTheme">@style/LinaDialog</item>
+  </style>
+  <style name="LinaDialog" parent="android:style/Theme.Material.Dialog.Alert">
+    <item name="android:fontFamily">sans-serif</item>
+    <item name="android:colorAccent">#c1b2fa</item>
+    <item name="android:colorBackground">#191b21</item>
+    <item name="android:textColorPrimary">#f0f0f5</item>
+    <item name="android:textColorSecondary">#9497a4</item>
+    <item name="android:windowBackground">@drawable/dialog_background</item>
+    <item name="android:windowMinWidthMajor">90%</item>
+    <item name="android:windowMinWidthMinor">92%</item>
+    <item name="android:backgroundDimAmount">0.65</item>
+  </style>
+</resources>

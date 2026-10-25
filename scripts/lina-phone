@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# Both phone SSH profiles attach to this dedicated terminal, retaining the current draft/viewport.
+set -euo pipefail
+if ! command -v tmux >/dev/null 2>&1; then
+  echo 'Install tmux on the LINA host to keep your phone terminal across SSH reconnects.' >&2
+  exit 1
+fi
+LINA_PHONE_BIN="${LINA_PHONE_BIN:-$(command -v lina || true)}"
+if [ -z "$LINA_PHONE_BIN" ] && [ -x "$(dirname "$0")/lina" ]; then
+  LINA_PHONE_BIN="$(dirname "$0")/lina"
+fi
+if [ -z "$LINA_PHONE_BIN" ]; then
+  echo 'The lina command is not on PATH.' >&2
+  exit 1
+fi
+# A dedicated socket avoids changing or detaching unrelated desktop tmux sessions.
+# -D replaces a stale phone connection when moving between Home and Away profiles.
+exec tmux -L "${LINA_PHONE_SOCKET:-lina-phone}" new-session -A -D -s lina -c "$HOME" "$LINA_PHONE_BIN" attach "$@"
