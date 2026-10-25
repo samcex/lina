@@ -38,6 +38,26 @@ async function reviewed(id:string){await waitUntil(async()=>{
 },15000);return api.session(id);}
 
 describe('durable reset retries and independent review',()=>{
+ it('continues a structured goal after both usage limits reset and independently checks completion',async()=>{
+  const at=Date.now()+1200;const {s}=await create({until:{claude:at,codex:at}},'pair');
+  await api.updateSession(s.id,{config:{interactionMode:'workflow',goal:'Build hello'}});
+  await api.send(s.id,'Build hello');await status(s.id,'failed');
+  const snap=await status(s.id,'completed');
+  expect(snap.session.goalStatus).toBe('complete');
+  expect(of(s.id).some(c=>c.step==='goal_check'&&c.role==='read')).toBe(true);
+  expect(snap.events.filter(e=>e.type==='message'&&e.actor==='user')).toHaveLength(1);
+  await api.deleteSession(s.id);
+ });
+ it('waits for an independent goal check after fallback work',async()=>{
+  const at=Date.now()+3000;const {s}=await create({until:{claude:at},approve:true},'pair');
+  await api.updateSession(s.id,{config:{interactionMode:'workflow',goal:'Build hello'}});
+  await api.send(s.id,'Build hello');
+  const first=await status(s.id,'completed');
+  expect(first.session.goalStatus).toBe('waiting-review');
+  const snap=await reviewed(s.id);
+  expect(snap.session.goalStatus).toBe('complete');
+  await api.deleteSession(s.id);
+ });
  it('automatically resumes at the earliest provider reset without another owner message',async()=>{
   const now=Date.now();const {s}=await create({until:{claude:now+10000,codex:now+1200}});
   await api.send(s.id,'Build hello');const waiting=await status(s.id,'failed');

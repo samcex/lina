@@ -55,6 +55,7 @@ export class SessionManager {
     for (const s of this.db.listSessions()) {
       if (s.status !== 'running') continue;
       const r = this.runner(s.id);
+      if (s.config.goal && !r.state.automaticDisabled) r.state.limitRetryPending = true;
       r.session.status = 'interrupted';
       r.session.phase = 'interrupted';
       this.events.append(s.id, 'phase', 'lina', { phase: 'interrupted', round: r.state.round });
@@ -300,6 +301,13 @@ export class SessionManager {
     if (!['chat', 'workflow'].includes(interactionMode)) throw new LinaError('interactionMode must be chat|workflow', 'invalid');
     if (interactionMode === 'chat' && workspaceMode !== 'direct') throw new LinaError('Conversational chat needs a direct workspace', 'invalid');
     cfg.interactionMode = interactionMode;
+    const goal = c.goal ?? base?.goal;
+    if (goal !== undefined) {
+      if (typeof goal !== 'string' || !goal.trim() || goal.length > 20000) throw new LinaError('goal must be non-empty text (maximum 20000 characters)', 'invalid');
+      if (interactionMode !== 'workflow') throw new LinaError('Goals require structured workflow mode', 'invalid');
+      if (!['pair', 'architect'].includes(mode)) throw new LinaError('Goals require pair or architect mode', 'invalid');
+      cfg.goal = goal.trim();
+    }
     if (team) cfg.team = team;
     const tc = c.testCommand !== undefined ? c.testCommand : base?.testCommand;
     if (tc !== undefined && tc !== null) {

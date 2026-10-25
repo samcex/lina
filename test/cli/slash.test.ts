@@ -2,6 +2,11 @@ import { describe, expect, it } from 'vitest';
 import { argLabel, argSuggestions, complete, leadingMention, parseSlash, slashSuggestions } from '../../src/cli/slash.js';
 
 describe('parseSlash', () => {
+  it('recognizes goals, preserves the objective and completes the command', () => {
+    expect(parseSlash('/goal')).toEqual({ type: 'goal' });
+    expect(parseSlash('/goal Build hello\nthen test it')).toEqual({ type: 'goal', objective: 'Build hello\nthen test it' });
+    expect(complete('/go', 3)?.value).toBe('/goal ');
+  });
   it('parses history, undo and persistent preview controls', () => {
     expect(parseSlash('/changes')).toEqual({ type: 'changes' });
     expect(parseSlash('/changes 3')).toEqual({ type: 'changes', turn: 3 });

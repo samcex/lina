@@ -157,6 +157,17 @@ const project=(await api.projects())[0];console.log(JSON.stringify(await api.cre
         terminal.expect('4–')
         terminal.send('\x1b')
         terminal.close('reattach.ansi')
+        terminal = Terminal('attach', sessions[0]['id'])
+        terminal.expect('● live')
+        terminal.command('/goal Build hello')
+        terminal.expect('Goal complete: independently checked', timeout=30)
+        terminal.command('/goal')
+        terminal.expect('Goal: Build hello')
+        goal_sessions = json.loads(cli('sessions', '--all', '--json'))
+        goals = [s for s in goal_sessions if s['config'].get('goal') == 'Build hello']
+        assert len(goals) == 1 and goals[0]['status'] == 'completed'
+        steps.append('slash goal executes a dedicated autonomous workflow in the real terminal')
+        terminal.close('goal.ansi')
         terminal = None
     # Seed only this disposable fixture's SQLite event log. No provider is asked to
     # generate thousands of messages, and the real daemon still serves every page.

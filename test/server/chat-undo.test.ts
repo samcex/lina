@@ -20,6 +20,27 @@ afterAll(async () => { await srv.close(); });
 async function done(id: string) { await waitUntil(async () => (await api.session(id)).session.status === 'completed', 20_000); return api.session(id); }
 
 describe('natural conversations', () => {
+  it('starts a goal from the TUI, runs implementation/tests/review and persists the objective', async () => {
+    const repo = makeRepo();
+    const project = await api.addProject({ path: repo });
+    const store = new TuiStore(api, { project, live: false, pendingConfig: { mock: true, mode: 'pair', stepMode: true } });
+    await store.goal('Build hello');
+    const id = store.getState().sessionId!;
+    expect(id).toBeTruthy();
+    const snap = await done(id);
+    expect(snap.session.config.goal).toBe('Build hello');
+    expect(snap.session.config.interactionMode).toBe('workflow');
+    expect(snap.session.config.stepMode).not.toBe(true);
+    expect(snap.events.some((e) => e.type === 'tests' && e.data.ok)).toBe(true);
+    expect(mockCalls.some((c) => c.opts.cwd === repo && c.step === 'review')).toBe(true);
+    expect(readFileSync(join(repo, 'hello.js'), 'utf8')).toContain('hello');
+    await srv.close();
+    srv = await startServer({ port: 0 });
+    api = new LinaClient({ baseUrl: `http://127.0.0.1:${srv.port}`, token: srv.token });
+    expect((await api.session(id)).session.config.goal).toBe('Build hello');
+    store.dispose();
+    await api.deleteSession(id);
+  });
   it('resumes a chat interrupted by daemon shutdown and still verifies its earlier partial changes', async () => {
     const repo = makeRepo();
     const project = await api.addProject({ path: repo });

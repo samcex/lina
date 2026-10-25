@@ -288,20 +288,42 @@ export class TuiStore {
     } catch { /* non-fatal */ }
   }
 
-  async createSession(prompt?: string): Promise<Session | undefined> {
+  async createSession(prompt?: string, config?: Partial<SessionConfig>): Promise<Session | undefined> {
     const project = this.state.project;
     if (!project) { this.notice('error', 'No project selected', 'Use /project to pick one.'); return; }
     this.set({ busy: 'Starting session…' });
     try {
-      const s = await this.client.createSession({ projectId: project.id, config: this.state.pendingConfig, ...(prompt ? { prompt, title: titleFrom(prompt) } : {}) });
+      const goal = config?.goal;
+      const s = await this.client.createSession({ projectId: project.id, config: config ?? this.state.pendingConfig,
+        ...(prompt ? { title: titleFrom(prompt), ...(!goal ? { prompt } : {}) } : {}) });
+      if (goal && s.config.goal !== goal) throw new Error('The running daemon does not support goals. Run lina daemon restart after active work finishes, then try /goal again.');
       this.set({ busy: undefined });
       await this.openSession(s.id);
+      if (goal && prompt) await this.sendMessage(prompt);
       return s;
     } catch (e) {
       this.set({ busy: undefined });
       this.fail(e, 'Could not start the session');
       return undefined;
     }
+  }
+
+  async goal(objective?: string): Promise<void> {
+    if (!objective) {
+      let session = this.state.view?.session;
+      if (session) {
+        try { session = (await this.client.session(session.id)).session; }
+        catch (e) { this.fail(e, 'Could not load the goal'); return; }
+      }
+      this.notice('info', session?.config.goal
+        ? `Goal: ${session.config.goal} · ${session.goalStatus ?? session.status} (${session.status})`
+        : 'No goal in this conversation. Start one with /goal <objective>.',
+      'Goals use structured implementation, tests and review. /pause · /resume · /cancel');
+      return;
+    }
+    // A dedicated conversation preserves the current task and its settings/history.
+    const config = { ...this.currentConfig(), goal: objective, mode: 'architect' as const, reviewer: this.currentConfig().developer === 'codex' ? 'claude' as const : 'codex' as const, interactionMode: 'workflow' as const, stepMode: false };
+    await this.createSession(objective, config);
   }
 
   async sendMessage(text: string, interrupt = false) {

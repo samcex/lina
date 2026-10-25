@@ -73,7 +73,7 @@ ${modeHelpLines(100).join('\n')}
 ${h('In the TUI')}
   Enter send · Alt+Enter / Ctrl+J newline · ↑/↓ history · Tab completes ${k('@codex')} ${k('@claude')} and /commands
   /new /sessions /project /model /models /roles /mode /team /live /diff /changes /undo /preview /findings /tests /choose /approve /reject
-  /pause /resume /cancel /retry /review /interrupt /ui /doctor /help /quit
+  /goal [objective] · /pause /resume /cancel /retry /review /interrupt /ui /doctor /help /quit
   Compete: /diff codex|claude compares the versions · /choose <agent> picks one · /approve <agent> [strategy] picks and applies
   Ctrl+C cancel turn (twice to quit) · Ctrl+P pause/resume · Ctrl+T live · Ctrl+D diff · Ctrl+F findings
   Ctrl+O web UI · Ctrl+L sessions · Wheel/PgUp/PgDn scroll · F1 or ? help · Esc close

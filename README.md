@@ -198,6 +198,17 @@ Choose `lina --interaction workflow "…"` or **Structured workflow** in the new
 options for the explicit playbook below. A direct session's **Chat / Workflow** header
 button switches between these behaviors while idle. Isolated sessions retain the playbook.
 
+## Goals in the terminal
+
+Use `/goal <objective>` to start a dedicated structured task in the selected project.
+The objective is saved with the conversation. LINA implements, tests and reviews it,
+then independently checks the full objective and automatically continues remaining work.
+It pauses for unresolved findings or missing owner decisions;
+Usage-limit failover and scheduled recovery work as for other tasks.
+Active goals also resume automatically after a daemon restart. `/goal` shows
+its objective and status. Use `/pause`, `/resume` and `/cancel` to control it.
+Normal review-round limits, unresolved findings and isolated-workspace approvals apply.
+
 ## Inspect and undo writing turns
 
 In the web inspector's **Changes** tab, select a writing turn to inspect its exact diff,

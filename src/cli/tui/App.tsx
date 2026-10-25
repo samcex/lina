@@ -199,6 +199,7 @@ export function App({ store, cwd, initial, onQuit, openUrl, size }: AppProps) {
         if (m && !view) store.notice('info', `Starting a session and asking ${m === 'codex' ? 'Codex' : 'Claude'}…`);
         break;
       }
+      case 'goal': void store.goal(a.objective); break;
       case 'new': store.newDraft(); if (a.prompt) void store.createSession(a.prompt); break;
       case 'sessions': setSessionPicker('sessions'); setOverlay('sessions'); break;
       case 'project': setOverlay('project'); break;

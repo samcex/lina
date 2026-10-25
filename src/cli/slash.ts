@@ -7,6 +7,7 @@ export interface SlashSpec { name: string; args?: string; desc: string; aliases?
 
 export const SLASH_COMMANDS: SlashSpec[] = [
   { name: 'menu', desc: 'Open navigation and tools (Ctrl+K when empty)' },
+  { name: 'goal', args: '[objective]', desc: 'Start a persistent structured goal, or show the current goal and status' },
   { name: 'new', args: '[prompt]', desc: 'Start a new session (optionally with a task)' },
   { name: 'sessions', desc: 'Switch to another session' },
   { name: 'scroll', args: '[on|off]', desc: 'Scroll with arrows/j/k; Esc returns to writing (Ctrl+G)' },
@@ -42,6 +43,7 @@ export const SLASH_COMMANDS: SlashSpec[] = [
 
 export type SlashAction =
   | { type: 'menu' }
+  | { type: 'goal'; objective?: string }
   | { type: 'new'; prompt?: string }
   | { type: 'sessions' }
   | { type: 'scroll'; enabled?: boolean }
@@ -115,6 +117,7 @@ export function parseSlash(input: string): SlashAction {
       if (!m || ((m[1] === 'stop' || m[1] === 'logs') && /\s/.test(m[2]))) return { type: 'error', message: 'Expected start <command>, stop <id>, or logs <id>', hint: usage('preview') };
       return { type: 'preview', action: m[1] as 'start' | 'stop' | 'logs', value: m[2] };
     }
+    case 'goal': return rest ? { type: 'goal', objective: rest } : { type: 'goal' };
     case 'new': return rest ? { type: 'new', prompt: rest } : { type: 'new' };
     case 'sessions': return noArgs({ type: 'sessions' });
     case 'scroll':

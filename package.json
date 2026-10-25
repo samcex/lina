@@ -1,7 +1,7 @@
 {
   "name": "lina",
-  "version": "0.1.0",
-  "description": "LINA — a multi-agent AI development environment (Codex + Claude Code)",
+  "version": "0.1.1",
+  "description": "LINA \u2014 a multi-agent AI development environment (Codex + Claude Code)",
   "private": true,
   "type": "module",
   "bin": {

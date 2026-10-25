@@ -1,7 +1,7 @@
 // LINA shared domain model. This file is the contract between the daemon,
 // the terminal UI and the web UI. Keep it dependency-free (runs in Node and browser).
 
-export const LINA_VERSION = '0.1.0';
+export const LINA_VERSION = '0.1.1';
 
 export type AgentId = 'codex' | 'claude';
 export const AGENT_IDS: AgentId[] = ['codex', 'claude'];
@@ -142,6 +142,8 @@ export interface Project {
 }
 
 export interface SessionConfig {
+  /** Explicit objective of a structured goal session. */
+  goal?: string;
   mode: Mode;
   /** New sessions edit the project directly. Missing on legacy sessions means isolated. */
   workspaceMode?: 'direct' | 'isolated';
@@ -178,6 +180,7 @@ export interface RateLimitInfo {
 }
 
 export interface Session {
+  goalStatus?: 'working' | 'complete' | 'blocked' | 'waiting-review';
   id: string;
   projectId: string;
   title: string;
