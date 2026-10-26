@@ -1,7 +1,7 @@
 // LINA shared domain model. This file is the contract between the daemon,
 // the terminal UI and the web UI. Keep it dependency-free (runs in Node and browser).
 
-export const LINA_VERSION = '0.1.9';
+export const LINA_VERSION = '0.1.10';
 
 export type AgentId = 'codex' | 'claude';
 export const AGENT_IDS: AgentId[] = ['codex', 'claude'];
@@ -208,6 +208,7 @@ export interface Session {
   pendingMessages: number;
   /** Next automatic quota retry or deferred independent review; null when none. */
   retryAt?: number | null;
+  retryReason?: 'capacity' | 'usage';
   mock?: boolean;
   /** parallel/compete: each agent's worktree. Absent for other modes (and before the split in parallel). */
   variants?: Partial<Record<AgentId, Variant>>;
@@ -364,6 +365,7 @@ export type ErrorCode =
   | 'auth'              // CLI not logged in / token expired
   | 'model_unavailable' // model not found / not allowed on this account
   | 'rate_limited'
+  | 'capacity'          // temporary provider/model capacity, not account quota
   | 'timeout'
   | 'cli_missing'
   | 'sandbox'           // OS sandbox failed (bwrap/seccomp)

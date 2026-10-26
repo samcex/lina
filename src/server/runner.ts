@@ -25,6 +25,9 @@ import { parseResponse, parseReview, parseSplit, type ParsedResponseItem, type P
 import { detectTestCommand, runTests } from './tests-runner.js';
 import { LinaError, errMessage, firstLine, rid, truncate } from './util.js';
 import type { TurnHistory } from './undo.js';
+import { agentDisplayText } from '../shared/agent-display.js';
+import { usageResetHint } from './agents/limit-reset.js';
+import { isCapacityMessage } from './agents/errors.js';
 import { parseGoalQueue, deferredIssues, type GoalTask } from './goal-queue.js';
 
 export type Step = 'idle' | 'chat' | 'plan' | 'plan_review' | 'implement' | 'integrate' | 'test' | 'review' | 'revise' | 'feedback' | 'verify' | 'approval' | 'done';
@@ -62,7 +65,7 @@ export interface RunnerState {
   independentReviewCompleted?: boolean;
   deferredReviewPasses?: number;
   lastReviewers?: AgentId[];
-  providerLimits?: Partial<Record<AgentId, { until: number; message: string }>>;
+  providerLimits?: Partial<Record<AgentId, { until: number; message: string; kind?: 'capacity' | 'usage'; resetAt?: number }>>;
   lastWriters?: Record<string, AgentId>;
   lastDeveloperAgent?: AgentId;
   selfReviewed?: boolean;
@@ -172,7 +175,7 @@ class Halt extends Error { constructor(public reason: HaltReason) { super(reason
 class GoalProtocolError extends Error {}
 class GoalWait extends Error { constructor(reason: string, public retryAt?: number) { super(reason); } }
 class ProviderLimited extends Error {
-  constructor(public agent: AgentId, message: string, public partial?: string, public files?: string[], public resetAt?: number) { super(message); }
+  constructor(public agent: AgentId, message: string, public partial?: string, public files?: string[], public resetAt?: number, public kind: 'capacity' | 'usage' = 'usage') { super(message); }
 }
 interface TurnSpec {
   agent: AgentId; role: Role; phase: Phase; access: 'read' | 'write'; prompt: string; deliver: QueuedMessage[];
@@ -224,16 +227,36 @@ export class SessionRunner {
   private shutdownRequested = false;
 
   constructor(public session: Session, public state: RunnerState, private deps: RunnerDeps) {
+    let migratedCapacity = false;
+    let migratedReset = false;
+    for (const limit of Object.values(state.providerLimits ?? {})) {
+      if (limit && !limit.kind && isCapacityMessage(limit.message)) {
+        limit.kind = 'capacity'; limit.until = Math.min(limit.until, Date.now()+15000); migratedCapacity = true;
+      }
+    }
+    if (migratedCapacity && state.limitRetryPending && !state.automaticDisabled) state.limitRetryAt = Math.min(state.limitRetryAt ?? Infinity, ...Object.values(state.providerLimits ?? {}).map(l=>(l?.until ?? Infinity)+1000));
+    // Older releases discarded reset hints that had just elapsed, imposing up to an hour's delay.
+    for (const agent of AGENT_IDS) {
+      const limit = state.providerLimits?.[agent];
+      if (!limit || limit.kind === 'capacity' || limit.resetAt !== undefined || !state.limitRetryPending || state.automaticDisabled) continue;
+      const last = deps.db.sql.prepare(`SELECT ts FROM events WHERE session_id = ? AND actor = ? AND type = 'turn'
+        AND json_extract(data, '$.state') = 'end' AND json_extract(data, '$.ok') = 0 ORDER BY seq DESC LIMIT 1`).get(session.id, agent) as {ts:number} | undefined;
+      const reset = last && usageResetHint(limit.message, Number(last.ts));
+      if (reset !== undefined && reset <= Number(last!.ts) && limit.until > reset + 300000) {
+        limit.resetAt = reset; limit.until = Math.min(limit.until, Date.now()+15000); migratedReset = true;
+      }
+    }
+    if (migratedReset) state.limitRetryAt = Math.min(state.limitRetryAt ?? Infinity, ...Object.values(state.providerLimits ?? {}).map(l=>(l?.until ?? Infinity)+1000));
     // Older failed sessions also pick up without retrying a known exhausted provider.
     if (session.status === 'failed' && !state.providerLimits) {
       const last = deps.db.events(session.id, 0, 100).filter((e) => e.type === 'error').at(-1);
-      if (last?.type === 'error' && last.data.code === 'rate_limited' && isAgent(last.data.agent)) {
-        state.providerLimits = { [last.data.agent]: { until: Date.now() + 5 * 60_000, message: last.data.message } };
+      if (last?.type === 'error' && ['rate_limited','capacity'].includes(last.data.code) && isAgent(last.data.agent)) {
+        state.providerLimits = { [last.data.agent]: { until: Date.now() + (last.data.code==='capacity'?15000:5*60_000), message: last.data.message, kind:last.data.code==='capacity'?'capacity':'usage' } };
       }
     }
     if (session.status === 'failed' && state.limitRetryPending === undefined && !state.automaticDisabled && state.providerLimits?.claude && state.providerLimits?.codex) {
       const last = deps.db.events(session.id, 0, 100).filter((e) => e.type === 'error').at(-1);
-      if (last?.type === 'error' && last.data.code === 'rate_limited' && last.data.message.startsWith('Both providers')) {
+      if (last?.type === 'error' && ['rate_limited','capacity'].includes(last.data.code)) {
         state.limitRetryPending = true;
         state.limitRetryAt = Math.max(Date.now(), Math.min(state.providerLimits.claude.until, state.providerLimits.codex.until)) + 1000;
       }
@@ -246,7 +269,7 @@ export class SessionRunner {
       for (const reviewer of AGENT_IDS) {
         if (!state.providerLimits?.[reviewer]) continue;
         const limit = deps.db.sql.prepare(`SELECT ts FROM events WHERE session_id = ? AND type = 'error'
-          AND json_extract(data, '$.code') = 'rate_limited' AND (actor = ? OR json_extract(data, '$.agent') = ?)
+          AND json_extract(data, '$.code') IN ('rate_limited','capacity') AND (actor = ? OR json_extract(data, '$.agent') = ?)
           ORDER BY seq DESC LIMIT 1`).get(session.id, reviewer, reviewer) as { ts: number } | undefined;
         const writer = other(reviewer);
         const first = limit ? writes.filter((change) => change.status === 'ready' && change.files.length && change.agent === writer && change.createdAt >= Number(limit.ts)).at(-1) : undefined;
@@ -265,6 +288,18 @@ export class SessionRunner {
     this.session.goalTask = this.state.goalCurrentTask?.task;
     this.session.goalDeferred = this.state.goalDeferred;
     this.session.retryAt = this.retryTimestamp();
+    this.session.retryReason = this.retryReason();
+    if (migratedReset) this.notice('The previous reset time has passed. Retrying automatically shortly instead of waiting through the old usage backoff.');
+    if (migratedCapacity || migratedReset) {
+      if (migratedCapacity) this.notice('Temporary model capacity is separate from account usage limits. Automatic retry remains scheduled.');
+      this.persist();
+    }
+  }
+
+  private retryReason(): 'capacity' | 'usage' | undefined {
+    if (!this.state.limitRetryPending || this.state.automaticDisabled || this.state.goalRetryAt) return;
+    const first = Object.values(this.state.providerLimits ?? {}).filter(l=>!!l).sort((a,b)=>a!.until-b!.until)[0];
+    return first?.kind ?? (first ? 'usage' : undefined);
   }
 
   private retryTimestamp(): number | null {
@@ -294,7 +329,7 @@ export class SessionRunner {
       this.resume();
     } else if (this.state.limitRetryPending && ['failed','interrupted'].includes(this.session.status)) {
       this.state.limitRetryAt = undefined;
-      this.notice(this.cfg.goal && !this.state.limitRetryAt ? 'Continuing the saved goal automatically.' : 'Usage reset reached. Continuing the pending step automatically.');
+      this.notice('Retry time reached. Continuing the pending step automatically.');
       this.resume();
     } else if (this.state.deferredReview) {
       const pending = this.state.deferredReview;
@@ -313,7 +348,7 @@ export class SessionRunner {
       this.state.lastBlockingSig = undefined;
       this.state.reviewedHead = undefined;
       this.setStep('review');
-      this.notice('Usage reset reached. Starting the deferred independent review automatically.');
+      this.notice('Retry time reached. Starting the deferred independent review automatically.');
       this.persist(); this.start();
     }
   }
@@ -335,7 +370,7 @@ export class SessionRunner {
     else if (pending.writer === writer) pending.at = Math.max(pending.at, at);
     else if (pending.next) pending.next.at = Math.max(pending.next.at, at);
     else pending.next = { at, base: this.reviewBase, reviewer, writer };
-    if (fresh) this.notice(`Independent review of ${writer}'s changes is scheduled after ${reviewer}'s usage reset at ${new Date(at).toISOString()}.`);
+    if (fresh) this.notice(`Independent review of ${writer}'s changes is scheduled when ${reviewer} is available again at ${new Date(at).toISOString()}.`);
   }
 
   private stopAutomatic(): void {
@@ -1379,7 +1414,7 @@ export class SessionRunner {
     this.state.goalCurrentTask = undefined;
     if (actual === writer) {
       this.state.goalStatus = 'waiting-review';
-      this.notice('Goal completion awaits the independent reviewer after its usage limit resets.');
+      this.notice('Goal completion awaits the independent reviewer when that provider is available again.');
     } else {
       this.state.goalStatus = 'complete';
       this.notice('Goal complete: independently checked against the objective.');
@@ -1593,7 +1628,7 @@ Use LINA_GOAL_COMPLETE, LINA_GOAL_CONTINUE: <remaining in-scope work>, or LINA_G
       if (note) this.notice(note);
       const result = this.cfg.goal
         ? this.state.goalStatus === 'waiting-review'
-          ? 'Goal implementation finished. Independent review will continue automatically after the usage limit resets.'
+          ? 'Goal implementation finished. Independent review will continue automatically when the other provider is available again.'
           : 'Goal complete: independently verified. No further input is needed for this objective.'
         : 'Finished in your project.';
       this.notice(`${result} ${await git.isDirty(this.ws) ? 'Uncommitted changes remain.' : 'The working tree is clean.'}`);
@@ -1746,16 +1781,18 @@ Use LINA_GOAL_COMPLETE, LINA_GOAL_CONTINUE: <remaining in-scope work>, or LINA_G
       if ((this.state.providerLimits?.[agent]?.until ?? 0) > Date.now()) continue;
       const takeover = agent !== spec.agent;
       if (takeover && !this.state.automaticDisabled && !this.cancelRequested) this.state.limitRetryPending = true;
-      if (takeover) this.notice(`A limit was reported for ${spec.agent}; ${agent} is taking over automatically in the same workspace.`);
+      if (takeover) this.notice(`${this.state.providerLimits?.[spec.agent]?.kind==='capacity' ? `${spec.agent}'s model is temporarily at capacity` : `A usage limit was reported for ${spec.agent}`}; ${agent} is taking over automatically in the same workspace.`);
       const prefix = takeover ? `Provider takeover: you are ${agent}, continuing ${spec.agent}'s ${spec.role} work in ${this.wsOf(spec.variant)}. Keep the same task, role, candidate/worktree and owner permissions. Inspect current files and completed actions first; preserve partial edits and do not repeat completed steps. Do not assume an old provider's conversation ID or claim another agent's work.\nCurrent request: ${this.state.task ?? ''}\nPlan: ${this.state.plan ?? ''}\nRevision: ${this.state.revisionRequest ?? ''}\n${continuation}\n\n` : '';
+      const attemptStarted = Date.now();
       try { return await this.runTurn({ ...spec, agent, requestedAgent: spec.agent, prompt: prefix + spec.prompt }); }
       catch (error) {
         if (!(error instanceof ProviderLimited)) throw error;
         const limits = this.deps.events.liveSnapshot(this.id).rateLimits[agent];
-        const resets = Object.values(limits?.windows ?? {}).filter((w) => w.utilization >= 1 || w.status === 'rejected').map((w) => w.resetsAt ?? 0).filter((t) => t > Date.now());
+        const resets = error.kind==='capacity' || (limits?.observedAt ?? 0) < attemptStarted ? [] : Object.values(limits?.windows ?? {}).filter((w) => w.status === 'rejected' || w.status === 'blocked' || w.status === 'denied' || (w.utilization >= 1 && w.status !== 'allowed')).map((w) => w.resetsAt ?? 0).filter((t) => t > Date.now());
+        const recentReset = error.kind==='usage' && error.resetAt !== undefined && error.resetAt <= Date.now() && error.resetAt > Date.now()-12*3600000;
         if (error.resetAt && error.resetAt > Date.now()) resets.push(error.resetAt);
         this.state.providerLimits ??= {};
-        this.state.providerLimits[agent] = { until: resets.length ? Math.max(...resets) : Date.now() + Math.min(60, 5 * 2 ** Math.min(this.state.limitRetryAttempts ?? 0, 4)) * 60_000, message: error.message };
+        this.state.providerLimits[agent] = { until: resets.length ? Math.max(...resets) : Date.now() + (error.kind==='capacity' || recentReset ? Math.min(120,15*2**Math.min(this.state.limitRetryAttempts??0,3))*1000 : Math.min(60, 5 * 2 ** Math.min(this.state.limitRetryAttempts ?? 0, 4)) * 60_000), message: error.message, kind:error.kind, resetAt:error.resetAt };
         continuation = `Previous provider's partial reply: ${error.partial ?? ''}\nFiles already changed: ${error.files?.join(', ') ?? '(inspect the current workspace)'}`;
         this.agentStatus(agent, 'error', error.message, spec.role);
         this.persist();
@@ -1766,7 +1803,10 @@ Use LINA_GOAL_COMPLETE, LINA_GOAL_CONTINUE: <remaining in-scope work>, or LINA_G
     this.state.limitRetryAt = Number.isFinite(retryAt) ? Math.max(Date.now() + 1000, retryAt) : Date.now() + 300000;
     this.state.limitRetryPending = true;
     this.state.limitRetryAttempts = (this.state.limitRetryAttempts ?? 0) + 1;
-    this.append('error', 'lina', { code: 'rate_limited', message: `${independentOnly ? 'The independent reviewer is still limited' : 'Both providers are limited'}. Work is preserved; automatic retry at ${new Date(this.state.limitRetryAt).toISOString()}.`, hint: 'LINA will resume automatically after reset. Pause or Cancel stops automatic retry.' });
+    const waitingAgents = independentOnly ? [spec.agent] : AGENT_IDS;
+    const capacity = waitingAgents.some(a=>this.state.providerLimits?.[a]?.kind==='capacity' && this.state.providerLimits[a]!.until>Date.now());
+    const why = capacity ? waitingAgents.map(a=>`${a}: ${this.state.providerLimits?.[a]?.kind==='capacity'?'model at capacity':'usage limit'}`).join('; ') : independentOnly ? 'The independent reviewer is still limited' : 'Both providers are limited';
+    this.append('error', 'lina', { code: capacity?'capacity':'rate_limited', message: `${why}. Work is preserved; automatic retry at ${new Date(this.state.limitRetryAt).toISOString()}.`, hint: 'LINA resumes automatically when a provider is available. Pause or Cancel stops automatic retry.' });
     this.persist();
     throw new Halt('error');
   }
@@ -1947,7 +1987,7 @@ Use LINA_GOAL_COMPLETE, LINA_GOAL_CONTINUE: <remaining in-scope work>, or LINA_G
       this.persist();
       throw new Halt(reason);
     }
-    if (quotaExhausted || (!result.ok && result.error?.code === 'rate_limited')) throw new ProviderLimited(agent, result.error?.message ?? 'Provider usage limit reached', result.text, change?.files.map((f) => f.path), result.error?.retryAt);
+    if (quotaExhausted || (!result.ok && (result.error?.code === 'rate_limited' || result.error?.code === 'capacity'))) throw new ProviderLimited(agent, result.error?.message ?? 'Provider usage limit reached', result.text, change?.files.map((f) => f.path), result.error?.retryAt, result.error?.code==='capacity'?'capacity':'usage');
     if (!result.ok) {
       const err = result.error ?? { code: 'internal' as const, message: 'Turn failed' };
       this.agentStatus(agent, 'error', err.message, role);
@@ -1989,7 +2029,7 @@ Use LINA_GOAL_COMPLETE, LINA_GOAL_CONTINUE: <remaining in-scope work>, or LINA_G
   }
 
   private agentMessage(agent: AgentId, role: Role, r: { msgId: string; model: string; agent?: AgentId }, text: string, kind: EventDataMap['message']['kind'], variant?: AgentId): void {
-    this.append('message', r.agent ?? agent, { id: r.msgId, text: text || '(no message)', kind, role, model: r.model, ...(variant ? { variant } : {}) });
+    this.append('message', r.agent ?? agent, { id: r.msgId, text: agentDisplayText(text) || '(no message)', kind, role, model: r.model, ...(variant ? { variant } : {}) });
   }
 
   // ── tests / checkpoints ───────────────────────────────────────────────
@@ -2247,6 +2287,7 @@ Use LINA_GOAL_COMPLETE, LINA_GOAL_CONTINUE: <remaining in-scope work>, or LINA_G
   }
 
   persist(): void {
+    this.session.retryReason = this.retryReason();
     this.session.goalTask = this.state.goalCurrentTask?.task;
     this.session.goalDeferred = this.state.goalDeferred;
     this.session.goalResumeQueued = !!this.state.goalResumePending && !this.state.automaticDisabled;

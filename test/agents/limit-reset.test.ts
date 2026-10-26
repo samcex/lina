@@ -1,5 +1,5 @@
 import {describe,it,expect} from 'vitest';
-import {usageResetAt} from '../../src/server/agents/limit-reset.js';
+import {usageResetAt, usageResetHint} from '../../src/server/agents/limit-reset.js';
 const now=Date.parse('2026-10-25T18:00:00Z');
 describe('usage reset timestamps',()=>{
  it('reads explicit timezone wall times from the actual Claude session-limit format',()=>{
@@ -17,6 +17,14 @@ describe('usage reset timestamps',()=>{
   expect(usageResetAt('resets at 2026-10-25T20:30:00Z',now)).toBe(Date.parse('2026-10-25T20:30:00Z'));
   expect(usageResetAt('usage limit|'+String((now+3600000)/1000),now)).toBe(now+3600000);
   expect(usageResetAt('Try again in 3 hours.',now)).toBe(now+10800000);
+ });
+ it('retains a just-elapsed Codex reset without rolling it over to tomorrow',()=>{
+  const at=Date.parse('2026-10-26T16:58:20Z');
+  expect(usageResetHint('Usage limit; try again at 5:58 PM (Europe/Zurich)',at)).toBe(Date.parse('2026-10-26T16:58:00Z'));
+  expect(usageResetAt('Usage limit; try again at 5:58 PM (Europe/Zurich)',at)).toBeUndefined();
+  expect(usageResetHint('Usage limit; try again at 5:58 PM (Europe/Zurich)',at+18*60000)).toBe(Date.parse('2026-10-26T16:58:00Z'));
+  expect(usageResetHint('resets at 2026-10-26T16:58:00Z',at)).toBe(Date.parse('2026-10-26T16:58:00Z'));
+  expect(usageResetHint('resets at 2026-10-26T16:00:00Z',at)).toBeUndefined();
  });
  it('does not turn a stale reset into repeated immediate requests',()=>{
   expect(usageResetAt('resets at 2026-10-25T17:59:00Z',now)).toBeUndefined();

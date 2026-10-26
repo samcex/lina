@@ -3,18 +3,19 @@ import { join } from 'node:path';
 import { beforeAll, afterAll, describe, expect, it } from 'vitest';
 import { makeRepo, setupEnv, waitUntil } from './helpers.js';
 import type { AgentId } from '../../src/shared/types.js';
+import { classifyError } from '../../src/server/agents/errors.js';
 setupEnv();
 const { startServer } = await import('../../src/server/daemon.js');
 const { LinaClient } = await import('../../src/shared/client.js');
 const { MockAdapter, mockCalls } = await import('../../src/server/agents/mock.js');
 const { setAdapterOverride } = await import('../../src/server/agents/index.js');
-type Scenario = { blocked: AgentId[]; code?: 'auth' | 'rate_limited' | 'timeout'; partial?: boolean; signal?: boolean; hold?: boolean; warning?: boolean };
+type Scenario = { blocked: AgentId[]; code?: 'auth' | 'rate_limited' | 'timeout'; partial?: boolean; signal?: boolean; hold?: boolean; warning?: boolean; capacity?: boolean; capacityAgent?: AgentId; recentReset?: boolean };
 const scenarios = new Map<string, Scenario>();
 const attempts: { id:string; agent:AgentId; prompt:string; cwd:string; access:string; at:number; resume?:string; model:string }[] = [];
 setAdapterOverride((agent, ctx) => ({ id:agent, async runTurn(opts,onEvent) {
  const scenario=scenarios.get(ctx.sessionId!);
  attempts.push({id:ctx.sessionId!,agent,prompt:opts.prompt,cwd:opts.cwd,access:opts.access,at:Date.now(),resume:opts.resumeId,model:opts.model});
- if(scenario?.warning) { onEvent({t:'rate_limit',info:{observedAt:Date.now(),windows:{five_hour:{utilization:1,status:'allowed'}}}}); expect(opts.signal.aborted).toBe(false); }
+ if(scenario?.warning) { onEvent({t:'rate_limit',info:{observedAt:Date.now(),windows:{five_hour:{utilization:1,status:'allowed',resetsAt:Date.now()+3600000}}}}); expect(opts.signal.aborted).toBe(false); }
  if(scenario?.blocked.includes(agent)) {
   if(scenario.partial&&opts.access==='write') appendFileSync(join(opts.cwd,'README.md'),'\nPartial work from limited provider.\n');
   if(scenario.signal) {
@@ -22,7 +23,8 @@ setAdapterOverride((agent, ctx) => ({ id:agent, async runTurn(opts,onEvent) {
    expect(opts.signal.aborted).toBe(true);
    return {ok:false,text:'Partial progress',usage:{},durationMs:0,error:{code:'cancelled',message:'Process cancelled after quota signal'}};
   }
-  return {ok:false,text:'Partial progress',providerSessionId:`blocked-${agent}`,usage:{},durationMs:0,error:{code:scenario.code??'rate_limited',message:'Provider session limit reached'}};
+  if(scenario.recentReset && agent==='codex') return {ok:false,text:'Partial progress',usage:{},durationMs:0,error:classifyError(agent,'Usage limit reached; try again at '+new Date(Date.now()-20000).toISOString())};
+  return {ok:false,text:'Partial progress',providerSessionId:`blocked-${agent}`,usage:{},durationMs:0,error:scenario.capacity||scenario.capacityAgent===agent?classifyError(agent,'Selected model is at capacity. Please try a different model.'):{code:scenario.code??'rate_limited',message:'Provider session limit reached'}};
  }
  return new MockAdapter(agent,{delayMs:0,holdMs:scenario?.hold?{chat:60000}:undefined}).runTurn(opts,onEvent);
 } }));
@@ -36,6 +38,73 @@ async function settled(id:string,status='completed'){await waitUntil(async()=>(a
 const of=(id:string)=>attempts.filter(x=>x.id===id);
 
 describe('automatic provider-limit takeover',()=>{
+ it('automatically picks up a temporary model-capacity failure without another owner message',async()=>{
+  const {s}=await create('codex',{blocked:['codex'],capacity:true,partial:true,warning:true});
+  await api.send(s.id,'Build hello');const snap=await settled(s.id);
+  expect(of(s.id).slice(0,2).map(x=>x.agent)).toEqual(['codex','claude']);
+  expect(snap.events.filter(e=>e.type==='message'&&e.actor==='user')).toHaveLength(1);
+  expect(existsSync(join(s.workspacePath,'hello.js'))).toBe(true);
+  const limit=srv.manager.db.getSessionState<any>(s.id)!.providerLimits.codex;
+  expect(limit.kind).toBe('capacity');expect(limit.until).toBeLessThan(Date.now()+30000);
+  expect(snap.events.some(e=>e.type==='message'&&e.data.text.includes('codex\'s model is temporarily at capacity'))).toBe(true);
+  await api.deleteSession(s.id);
+ });
+ it('automatically retries capacity failures after cooldown and daemon restart without reopening the conversation',async()=>{
+  const scenario:Scenario={blocked:['codex','claude'],capacity:true,partial:true};
+  const {s}=await create('codex',scenario);await api.send(s.id,'Build hello');
+  const waiting=await settled(s.id,'failed');
+  expect(waiting.session.retryAt).toBeGreaterThan(Date.now());
+  expect(waiting.session.retryReason).toBe('capacity');
+  expect(waiting.events.some(e=>e.type==='error'&&e.data.code==='capacity')).toBe(true);
+  expect(waiting.events.some(e=>e.type==='error'&&e.data.code==='rate_limited')).toBe(false);
+  const state=srv.manager.db.getSessionState<any>(s.id)!;
+  expect(state.limitRetryPending).toBe(true);expect(state.automaticDisabled).not.toBe(true);
+  for(const limit of Object.values(state.providerLimits) as {until:number}[])limit.until=Date.now()-1;
+  state.limitRetryAt=Date.now()+200;
+  srv.manager.db.updateSession(waiting.session,state);await srv.close();scenario.blocked=[];await start();
+  await waitUntil(()=>srv.manager.db.getSession(s.id)?.status==='completed',15000);
+  const done=await api.session(s.id);
+  expect(done.events.filter(e=>e.type==='message'&&e.actor==='user')).toHaveLength(1);
+  expect(existsSync(join(s.workspacePath,'hello.js'))).toBe(true);
+  await api.deleteSession(s.id);
+ });
+ it('distinguishes Codex capacity from Claude quota and repairs a legacy mislabeled cooldown',async()=>{
+  const {s}=await create('codex',{blocked:['codex','claude'],capacityAgent:'codex'});await api.send(s.id,'Build hello');
+  const snap=await settled(s.id,'failed');const error=snap.events.filter(e=>e.type==='error').at(-1)!;
+  expect(error.data.code).toBe('capacity');expect(error.data.message).toContain('codex: model at capacity');expect(error.data.message).toContain('claude: usage limit');
+  const state=srv.manager.db.getSessionState<any>(s.id)!;
+  expect(state.providerLimits.claude.kind).toBe('usage');delete state.providerLimits.codex.kind;
+  state.providerLimits.codex.until=Date.now()+3600000;state.limitRetryAt=Date.now()+3600000;
+  srv.manager.db.updateSession(snap.session,state);await srv.close();await start();
+  const restored=await api.session(s.id);expect(restored.session.retryReason).toBe('capacity');expect(restored.session.retryAt).toBeLessThan(Date.now()+30000);
+  expect(srv.manager.db.getSessionState<any>(s.id)!.providerLimits.codex.kind).toBe('capacity');
+  await api.deleteSession(s.id);
+ });
+ it('automatically restarts Codex shortly after a rounded reset even with an allowed full usage window and no open client',async()=>{
+  const scenario:Scenario={blocked:['codex','claude'],recentReset:true,warning:true};
+  const {s}=await create('codex',scenario);await api.send(s.id,'Build hello');const snap=await settled(s.id,'failed');
+  const state=srv.manager.db.getSessionState<any>(s.id)!;
+  expect(state.providerLimits.codex.resetAt).toBeLessThan(Date.now());
+  expect(snap.session.retryAt).toBeLessThan(Date.now()+20000);
+  scenario.blocked=['claude'];await srv.close();await start();
+  // No session snapshot, polling client or owner Resume arms this timer.
+  await waitUntil(()=>srv.manager.db.getSession(s.id)?.status==='completed',30000);
+  const done=await api.session(s.id);
+  expect(of(s.id).map(c=>c.agent)).toEqual(['codex','claude','codex']);
+  expect(done.events.filter(e=>e.type==='message'&&e.actor==='user')).toHaveLength(1);
+  expect(existsSync(join(s.workspacePath,'hello.js'))).toBe(true);
+  await api.deleteSession(s.id);
+ },35000);
+ it('repairs an inherited hour-long cooldown caused by a just-elapsed reset',async()=>{
+  const {s}=await create('codex',{blocked:['codex','claude'],recentReset:true});await api.send(s.id,'Build hello');const snap=await settled(s.id,'failed');
+  const state=srv.manager.db.getSessionState<any>(s.id)!;delete state.providerLimits.codex.resetAt;
+  state.providerLimits.codex.until=Date.now()+3600000;state.limitRetryAt=Date.now()+3600000;
+  srv.manager.db.updateSession(snap.session,state);await srv.close();await start();
+  const restored=await api.session(s.id);
+  expect(restored.session.retryAt).toBeLessThan(Date.now()+20000);
+  expect(srv.manager.db.getSessionState<any>(s.id)!.providerLimits.codex.resetAt).toBeLessThan(Date.now());
+  await api.deleteSession(s.id);
+ });
  it.each(['claude','codex'] as const)('immediately continues %s work with the other provider, in the same workspace and without another message',async(developer)=>{
   const fallback=developer==='claude'?'codex':'claude';const {repo,s}=await create(developer,{blocked:[developer],partial:true});
   await api.send(s.id,'Build hello');const snap=await settled(s.id);

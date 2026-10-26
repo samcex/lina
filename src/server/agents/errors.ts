@@ -2,7 +2,7 @@
 import type { AgentId, ErrorCode } from '../../shared/types.js';
 import type { TurnError } from './types.js';
 import { redact } from './redact.js';
-import { usageResetAt } from './limit-reset.js';
+import { usageResetHint } from './limit-reset.js';
 
 export interface ErrorExtra {
   exitCode?: number | null;
@@ -24,6 +24,8 @@ const SANDBOX_RE = /\bbwrap:|apply-seccomp|nested userns|user namespaces?|landlo
 const AUTH_RE = /not logged in|log ?in required|please (?:run )?\/login|run `?\/login|codex login|claude auth login|invalid (?:api key|x-api-key|token|bearer token|authentication)|authentication[_ ](?:error|failed)|unauthori[sz]ed|oauth token (?:has )?expired|token (?:has )?expired|refresh token (?:is |has )?(?:expired|invalid|revoked)|credentials? (?:are |is )?(?:missing|invalid|expired)|(?:status|http|code)[\s:=\"]*401\b|\b401 unauthori/i;
 const MODEL_RE = /not supported when using codex with a chatgpt account|issue with the selected model|unrecognized_model|unknown model|model[^\n]{0,80}\b(?:not found|does not exist|is not available|not available|not supported|unavailable)|does not have access to (?:the )?model|model_not_found|invalid model|no such model/i;
 const RATE_RE = /usage limit|session limit|weekly limit|rate[ _-]?limit(?:ed|_error| exceeded| reached)?\b|too many requests|(?:status|http|code)[\s:=\"]*(?:429|529)\b|overloaded|quota (?:exceeded|exhausted)/i;
+const CAPACITY_RE = /\b(?:selected )?model (?:is )?(?:(?:currently|temporarily) )?at capacity\b|\boverloaded\b/i;
+export function isCapacityMessage(message: string): boolean { return CAPACITY_RE.test(message); }
 const TIMEOUT_RE = /timed? ?out|timeout/i;
 const MISSING_RE = /\bENOENT\b|command not found|not found in PATH|No such file or directory.*(?:codex|claude)/i;
 
@@ -77,11 +79,14 @@ export function classifyError(agent: AgentId, message: string, extra: ErrorExtra
   if (status === 401 || status === 403 || AUTH_RE.test(hay)) {
     return mk('auth', `${cli.name} is not logged in or its credentials expired`, `Run \`${cli.login}\` in a terminal on this machine, then retry.`);
   }
+  if (status === 529 || isCapacityMessage(hay)) {
+    return mk('capacity', `${cli.name}'s selected model is temporarily at capacity`, 'LINA automatically tries the other provider and schedules another attempt when capacity is available.');
+  }
   if (status === 404 || MODEL_RE.test(hay)) {
     return mk('model_unavailable', `The selected model is not available to your ${cli.name} account`, 'Pick another model in the model picker (or run model validation to see which models work for your account).');
   }
   if (status === 429 || status === 529 || RATE_RE.test(hay)) {
-    const retryAt = usageResetAt(hay);
+    const retryAt = usageResetHint(hay);
     return { ...mk('rate_limited', `${cli.name} hit a rate or usage limit`, 'LINA automatically switches providers and retries pending work after usage resets.'), ...(retryAt ? { retryAt } : {}) };
   }
   if (TIMEOUT_RE.test(raw) && !raw.includes('{')) {

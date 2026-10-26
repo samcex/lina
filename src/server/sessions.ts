@@ -63,7 +63,7 @@ export class SessionManager {
           const text = state?.goalStatus === 'complete'
             ? 'Goal complete: independently verified. No further input is needed for this objective.'
             : state?.goalStatus === 'waiting-review' && !state.automaticDisabled
-              ? 'Goal implementation finished. Independent review will continue automatically after the usage limit resets.'
+              ? 'Goal implementation finished. Independent review will continue automatically when the other provider is available again.'
               : undefined;
           if (text) this.events.append(s.id, 'message', 'lina', { id: rid(), text, kind: 'notice' });
         }

@@ -149,7 +149,7 @@ describe('App (Ink)', () => {
     stdin.write('/help'); await tick();
     expect(stdout.last).toContain('/help');
     stdin.write('\r'); await tick();
-    expect(stdout.last).toContain('◆ Help');
+    await vi.waitFor(() => expect(stdout.last).toContain('◆ Help'), { timeout: 2000 });
     stdin.write('\x1b'); await tick(120);
 
     // a plain message is sent to the daemon

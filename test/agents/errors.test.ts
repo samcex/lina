@@ -2,6 +2,12 @@ import { describe, expect, it } from 'vitest';
 import { classifyError, unwrapJsonError } from '../../src/server/agents/errors.js';
 
 describe('classifyError', () => {
+  it('retries temporary model capacity failures without treating disk capacity as a provider limit',()=>{
+    const e=classifyError('codex','Selected model is at capacity. Please try a different model.');
+    expect(e.code).toBe('capacity');expect(e.message).toContain('temporarily at capacity');
+    expect(classifyError('codex','Disk is at capacity').code).toBe('crashed');
+    expect(classifyError('codex','Selected model is at capacity',{apiStatus:401}).code).toBe('auth');
+  });
   it('auth', () => {
     expect(classifyError('codex', 'Not logged in. Run codex login').code).toBe('auth');
     const e = classifyError('claude', 'Invalid API key · Please run /login');
@@ -19,7 +25,7 @@ describe('classifyError', () => {
   });
   it('rate_limited', () => {
     expect(classifyError('codex', "You've hit your usage limit. Try again in 3 hours.").code).toBe('rate_limited');
-    expect(classifyError('claude', 'API Error: 529 Overloaded').code).toBe('rate_limited');
+    expect(classifyError('claude', 'API Error: 529 Overloaded').code).toBe('capacity');
     expect(classifyError('claude', 'x', { apiStatus: 429 }).code).toBe('rate_limited');
     expect(classifyError('claude', 'Claude AI usage limit reached|1792815600').code).toBe('rate_limited');
   });

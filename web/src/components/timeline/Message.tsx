@@ -10,6 +10,7 @@ import { Avatar } from '../ui/Glyphs';
 import { Markdown } from '../Markdown';
 import { Spinner } from '../ui/Overlay';
 import type { AgentView } from '@shared/reducer';
+import { agentDisplayText } from '@shared/agent-display';
 import { VariantChip } from '../Variants';
 import { variantPhrase, worktreePhrase } from '../../lib/modes';
 
@@ -22,8 +23,8 @@ const KIND_META: Record<string, { label: string; icon: typeof Eye } | undefined>
 };
 
 /** Structured lina-review / lina-response / lina-split JSON blocks render as cards; hide them from prose. */
-export function stripStructured(text: string): string {
-  return text.replace(/```lina-(review|response|split)[\s\S]*?(```|$)/g, '').trim();
+export function stripStructured(text: string, streaming = false): string {
+  return agentDisplayText(text, streaming);
 }
 
 function RoleTag({ role }: { role?: Role }) {
@@ -65,7 +66,7 @@ export const MessageGroup = memo(function MessageGroup({ actor, msgs, focusSeq }
         </div>
         {msgs.map((m) => {
           const meta = KIND_META[m.data.kind];
-          const text = m.data.kind === 'review' || m.data.kind === 'response' || m.data.kind === 'plan' ? stripStructured(m.data.text) : m.data.text;
+          const text = stripStructured(m.data.text);
           return (
             <div key={m.seq} id={`ev-${m.seq}`} className={cx('msg', `kind-${m.data.kind}`, focusSeq === m.seq && 'is-focus')}>
               {(meta || m.data.variant) && (
@@ -110,7 +111,7 @@ export function StreamingMessage({ agent, text, role, model, status }: { agent: 
           <span className="streaming-tag"><i />{status && status !== 'idle' ? STATUS_LABEL[status] : 'Writing'}</span>
         </div>
         <div className="msg">
-          {deferred ? <Markdown text={stripStructured(deferred) || '…'} streaming /> : <div className="shimmer-lines"><i /><i /><i /></div>}
+          {deferred ? <Markdown text={stripStructured(deferred, true) || '…'} streaming /> : <div className="shimmer-lines"><i /><i /><i /></div>}
         </div>
       </div>
     </div>

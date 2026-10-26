@@ -4,6 +4,7 @@
 import type { AgentId, AnyLinaEvent, Candidate, Finding, LinaEvent, Mode, Severity, TestRun } from '../shared/types.js';
 import type { SessionView } from '../shared/reducer.js';
 import { PHASE_LABEL } from '../shared/reducer.js';
+import { agentDisplayText } from '../shared/agent-display.js';
 import { bg, bold, dim, fg, italic, padAnsi, strWidth, truncateAnsi, wrapAnsi } from './ansi.js';
 import { renderMarkdown } from './markdown.js';
 import { AGENT_NAME, C, SEVERITY_COLOR, SEVERITY_ORDER, actorColor, actorName } from './theme.js';
@@ -112,7 +113,7 @@ function renderMessage(e: LinaEvent<'message'>, width: number, ctx: RenderCtx = 
   const meta = tags.length ? ' ' + dim(tags.join(' · ')) : '';
   const right = dim((d.model ? d.model + '  ' : '') + formatClock(e.ts));
   const out = [headerLine(badge(e.actor) + meta, right, width)];
-  const body = renderMarkdown(d.text, width - 2);
+  const body = renderMarkdown(e.actor === 'codex' || e.actor === 'claude' ? agentDisplayText(d.text) : d.text, width - 2);
   out.push(...indent(body));
   if (d.attachments?.length) out.push(...indent(d.attachments.map((a) => dim(`📎 ${a.name} (${Math.ceil(a.size / 1024)} KB)`))));
   out.push('');
@@ -386,7 +387,8 @@ export function renderNotice(n: LocalNotice, width: number): string[] {
 export function renderStream(s: { agent: 'codex' | 'claude'; text: string }, width: number, cursorOn: boolean): string[] {
   const color = actorColor(s.agent);
   const out = [headerLine(badge(s.agent) + ' ' + fg(color)(italic('writing…')), '', width)];
-  const body = s.text.trim() ? renderMarkdown(s.text, width - 2) : [''];
+  const text = agentDisplayText(s.text, true);
+  const body = text ? renderMarkdown(text, width - 2) : [''];
   const cursor = cursorOn ? fg(color)('▍') : ' ';
   body[body.length - 1] = body[body.length - 1] + cursor;
   out.push(...indent(body), '');

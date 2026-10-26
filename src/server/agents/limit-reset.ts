@@ -1,6 +1,12 @@
-/** Extract provider reset hints without depending on the daemon's timezone. */
+/** Future reset timestamps for callers that only need an upcoming reset. */
 export function usageResetAt(message: string, now = Date.now()): number | undefined {
-  const future = (t: number) => Number.isFinite(t) && t > now ? t : undefined;
+  const at = usageResetHint(message, now);
+  return at !== undefined && at > now ? at : undefined;
+}
+
+/** Retain elapsed reset hints too: providers can keep reporting a rounded reset minute. */
+export function usageResetHint(message: string, now = Date.now()): number | undefined {
+  const future = (t: number) => Number.isFinite(t) && t > now - 300000 ? t : undefined;
   const iso = /(?:reset\w*|try again)[^\n]{0,40}?(\d{4}-\d\d-\d\d[T ]\d\d:\d\d(?::\d\d(?:\.\d+)?)?(?:Z|[+-]\d\d:\d\d))/i.exec(message);
   if (iso) return future(Date.parse(iso[1]));
   const epoch = /(?:reset(?:s|_at|At)?[\s:="']+|\|)(\d{10}(?:\d{3})?)(?!\d)/i.exec(message);
@@ -32,7 +38,9 @@ export function usageResetAt(message: string, now = Date.now()): number | undefi
     const today = candidates(year,month,day);
     const next = today.find(t=>t>=now);
     if(next!==undefined) return next;
-    if(today.some(t=>t>=now-300000)) return undefined;
+    // A same-day past clock time is stale, not a promise to wait until tomorrow.
+    const recent = today.filter(t=>t>now-(wall[1] ? 300000 : 12*3600000)).at(-1);
+    if(recent!==undefined) return recent;
     if(wall[1]) return wall[3] ? undefined : candidates(year+1,month,day).find(t=>t>now);
     const tomorrow=new Date(Date.UTC(year,month-1,day+1));
     return candidates(tomorrow.getUTCFullYear(),tomorrow.getUTCMonth()+1,tomorrow.getUTCDate()).find(t=>t>now);

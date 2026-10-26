@@ -1,6 +1,7 @@
 // Pure line builders for the TUI chrome: header, agent panels, composer, footer.
 import type { AgentView, SessionView } from '../../shared/reducer.js';
 import { PIPELINE, PHASE_LABEL, STATUS_LABEL, pipelineFor } from '../../shared/reducer.js';
+import { agentDisplayText } from '../../shared/agent-display.js';
 import type { AgentId, AgentModelChoice, Mode, Phase, RateLimitInfo, Role, SessionConfig, SessionStatus } from '../../shared/types.js';
 import { bg, bold, charWidth, dim, fg, inverse, italic, strWidth, truncateAnsi } from '../ansi.js';
 import { roleTags } from '../team.js';
@@ -205,8 +206,7 @@ export function panelUpdate(view: SessionView | undefined, agent: AgentId): Pane
   if (!view) return undefined;
   const streams = Object.values(view.streams).filter((stream) => stream.agent === agent);
   const latest = view.timeline.findLast((event) => event.type === 'message' && event.actor === agent);
-  const text = (streams.length ? streams.map((stream) => stream.text).join('\n\n') : latest?.type === 'message' ? latest.data.text : '')
-    .replace(/```(?:lina-chat|lina-review|lina-response|lina-split)\s*[\s\S]*?```/g, '').trim();
+  const text = agentDisplayText(streams.length ? streams.map((stream) => stream.text).join('\n\n') : latest?.type === 'message' ? latest.data.text : '', streams.length > 0);
   return text ? { text, streaming: streams.length > 0 } : undefined;
 }
 

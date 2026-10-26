@@ -7,6 +7,14 @@ import {viewFromSnapshot} from '../../src/shared/reducer.js';
 import {stripAnsi} from '../../src/cli/ansi.js';
 import {project,snapshot} from './fixture.js';
 describe('automatic reset wait status',()=>{
+ it('labels service capacity separately from account usage limits',()=>{
+  const snap=snapshot();snap.session={...snap.session,status:'failed',phase:'failed',retryAt:Date.now()+16000,retryReason:'capacity'};
+  const store=new TuiStore({} as ClientLike,{project,view:viewFromSnapshot(snap),live:false});
+  try{
+   const text=stripAnsi(renderToString(<App store={store} cwd="/tmp" onQuit={()=>{}} size={{columns:140,rows:30}}/>,{columns:140}));
+   expect(text).toContain('Waiting for model capacity');expect(text).not.toContain('Waiting for usage reset');
+  }finally{store.dispose();}
+ });
  it.each(['complete','waiting-review'] as const)('distinguishes %s goals from waiting for owner input',goalStatus=>{
   const snap=snapshot();snap.session={...snap.session,status:'completed',phase:'completed',config:{...snap.session.config,goal:'Build hello'},goalStatus,retryAt:goalStatus==='waiting-review'?Date.now()+3600000:null};
   const store=new TuiStore({} as ClientLike,{project,view:viewFromSnapshot(snap),live:false});
