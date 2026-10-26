@@ -16,11 +16,14 @@ export interface CodexArgOptions extends Pick<TurnOptions, 'cwd' | 'model' | 'ef
  * and the working directory is the spawned process' cwd.
  */
 export function buildCodexArgs(opts: CodexArgOptions, isolation: string[] = []): string[] {
-  const full = opts.access === 'write' && opts.fullAccess === true;
-  const sandbox = opts.access === 'write' ? full ? 'danger-full-access' : 'workspace-write' : 'read-only';
+  const full = opts.fullAccess === true;
+  const sandbox = full ? 'danger-full-access' : opts.access === 'write' ? 'workspace-write' : 'read-only';
   const args = opts.resumeId ? ['exec', 'resume', '--json'] : ['exec', '--json'];
-  if (opts.resumeId) args.push('-c', `sandbox_mode="${sandbox}"`);
-  else args.push('-s', sandbox, '-C', opts.cwd);
+  if (full) args.push('--yolo', '-c', 'sandbox_mode="danger-full-access"');
+  if (!opts.resumeId) {
+    if (!full) args.push('-s', sandbox);
+    args.push('-C', opts.cwd);
+  } else if (!full) args.push('-c', `sandbox_mode="${sandbox}"`);
   args.push('--skip-git-repo-check', '-m', opts.model);
   if (opts.effort) args.push('-c', `model_reasoning_effort="${opts.effort}"`);
   args.push('-c', 'approval_policy="never"');
@@ -227,7 +230,7 @@ export class CodexAdapter implements AgentAdapter {
     if (opts.reaEnabled) {
       const rea = await configuredRea('codex', this.bin);
       isolation = isolation.filter((value, index, all) => value !== 'mcp_servers.rea.enabled=false' && !(value === '-c' && all[index + 1] === 'mcp_servers.rea.enabled=false'));
-      isolation.push(...reaCodexArgs(rea, opts.access === 'read' || opts.fullAccess !== true));
+      isolation.push(...reaCodexArgs(rea, opts.fullAccess !== true));
     }
     const proc = await runProcess({
       cmd: this.bin,

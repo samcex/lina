@@ -203,11 +203,14 @@ button switches between these behaviors while idle. Isolated sessions retain the
 Use `/goal <objective>` to start a dedicated structured task in the selected project.
 The objective is saved with the conversation. LINA implements, tests and reviews it,
 then independently checks the full objective and automatically continues remaining work.
-It pauses for unresolved findings or missing owner decisions;
+Minor/nit findings, failed checks and review-format errors are repaired automatically;
+review-round limits start another repair cycle. Only genuinely missing input or
+external prerequisites pause the goal;
 Usage-limit failover and scheduled recovery work as for other tasks.
 Active goals also resume automatically after a daemon restart. `/goal` shows
 its objective and status. Use `/pause`, `/resume` and `/cancel` to control it.
-Normal review-round limits, unresolved findings and isolated-workspace approvals apply.
+Explicit Pause/Cancel, project constraints and isolated-workspace approvals still apply.
+Goals sharing a project queue durably and continue when it becomes available.
 
 ## REA tools
 
@@ -219,8 +222,8 @@ lina settings set rea on
 ```
 
 This applies to both agents from their next turn. LINA inherits only the `rea`
-server; other personal MCP servers and plugins stay disabled. Full-access developers get the
-REA toolset; reviewers and restricted developers get static inspection tools,
+server; other personal MCP servers and plugins stay disabled. In Full access, both agents get the
+REA toolset. Restricted access uses static inspection tools,
 including opening binaries/APKs and reading decompilation evidence. Target changes,
 target execution, exports and REA settings writes stay outside that analysis profile. REA
 launches with the daemon's Node runtime rather than a different version from a
@@ -327,11 +330,12 @@ defaults.
 * **Workspaces.** Direct sessions edit your repository and leave changes uncommitted.
   Isolated sessions get a clone in `~/.lina/workspaces/<id>` with its git remote **removed**.
   Their results are applied on approval; squash and merge refuse to run over uncommitted work.
-* **Full access (default).** Developer agents and LINA's tests run with your user account's
+* **Full access (default).** Both agents and LINA's tests run with your user account's
   filesystem, command and network permissions, without permission prompts. Codex uses
-  `danger-full-access` with `approval_policy=never`; Claude skips permission checks and has
-  its OS sandbox disabled. This applies to both new and existing sessions from the next turn.
-  Reviewers retain their read-only restrictions.
+  `--yolo` with `danger-full-access` and `approval_policy=never`; Claude uses
+  `--dangerously-skip-permissions` with its OS sandbox disabled. This applies to both new and existing sessions from the next turn.
+  This includes planning, review and resumed turns. Reviewer instructions retain independent
+  review responsibilities; Full access does not enforce a read-only runtime.
 * **Access settings.** Choose **Settings → Developer access → Restricted**, or run
   `lina settings set access restricted`, to use the previous provider sandboxes and command
   restrictions. `lina settings set access full` restores full access. In Restricted mode,

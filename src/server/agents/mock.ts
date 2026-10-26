@@ -190,9 +190,10 @@ export class MockAdapter implements AgentAdapter {
     switch (step) {
       case 'goal_check':
         if (this.scenario === 'goal-blocked') return 'LINA_GOAL_BLOCKED: Choose the deployment target.';
-        if (this.scenario === 'goal-malformed') return 'Looks good to me.';
+        if (['goal-malformed','goal-malformed-once'].includes(this.scenario)) return 'Looks good to me.';
         if (this.scenario === 'goal-continue' && round === 0) return 'LINA_GOAL_CONTINUE: Finish the requested input validation.';
         return 'The implementation and tests satisfy the goal.\nLINA_GOAL_COMPLETE';
+      case 'goal_check_repair': return this.scenario === 'goal-malformed' ? 'Looks good.' : 'LINA_GOAL_COMPLETE';
       case 'chat': {
         const request = /Request from the project owner:\n([\s\S]*?)(?:\n\n|$)/.exec(opts.prompt)?.[1] ?? opts.prompt;
         if (/^(what|why|how|can you explain|explain|hello\b|hi\b)/i.test(request)) return 'This project exposes a hello(name) function. I can explain it without changing any files.';

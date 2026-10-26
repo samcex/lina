@@ -1,7 +1,7 @@
 // LINA shared domain model. This file is the contract between the daemon,
 // the terminal UI and the web UI. Keep it dependency-free (runs in Node and browser).
 
-export const LINA_VERSION = '0.1.4';
+export const LINA_VERSION = '0.1.5';
 
 export type AgentId = 'codex' | 'claude';
 export const AGENT_IDS: AgentId[] = ['codex', 'claude'];
@@ -180,6 +180,8 @@ export interface RateLimitInfo {
 }
 
 export interface Session {
+  /** Owner requested continuation while another goal owns this project. */
+  goalResumeQueued?: boolean;
   goalStatus?: 'working' | 'complete' | 'blocked' | 'waiting-review';
   id: string;
   projectId: string;
@@ -450,7 +452,7 @@ export interface DoctorCheck {
 
 export interface Settings {
   reaEnabled?: boolean;
-  /** Full developer filesystem/network access, or the provider's restricted sandbox. */
+  /** Full agent filesystem/network access, or the provider's restricted sandbox. */
   accessMode: 'full' | 'restricted';
   models: Record<AgentId, AgentModelChoice>;
   developer: AgentId;

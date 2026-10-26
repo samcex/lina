@@ -46,6 +46,7 @@ it('loads only REA for Claude and adds read-only tool permissions without replac
   expect(args).toContain('Bash(git diff:*)');
   expect(args).toContain('--disallowedTools');
   expect(buildClaudeArgs({...opts,access:'write',fullAccess:true},server)).toContain('mcp__rea__*');
+  expect(buildClaudeArgs({...opts,access:'read',fullAccess:true},server)).toContain('mcp__rea__*');
   expect(buildClaudeArgs({...opts,access:'write',fullAccess:false},server)).not.toContain('mcp__rea__*');
   expect(buildClaudeArgs(opts)).not.toContain('--mcp-config');
 });

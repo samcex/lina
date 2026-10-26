@@ -316,7 +316,7 @@ export class TuiStore {
         catch (e) { this.fail(e, 'Could not load the goal'); return; }
       }
       this.notice('info', session?.config.goal
-        ? `Goal: ${session.config.goal} · ${session.goalStatus ?? session.status} (${session.status})`
+        ? `Goal: ${session.config.goal} · ${session.goalResumeQueued ? 'queued — continues automatically when the project is free' : session.goalStatus ?? session.status} (${session.status})`
         : 'No goal in this conversation. Start one with /goal <objective>.',
       'Goals use structured implementation, tests and review. /pause · /resume · /cancel');
       return;

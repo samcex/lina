@@ -50,10 +50,9 @@ export function buildClaudeArgs(opts: Pick<TurnOptions, 'model' | 'effort' | 're
   args.push('--permission-prompts', 'none', ...CLAUDE_ISOLATION_ARGS);
   // `=` form: the value can't be mistaken for an option even if it starts with "-".
   if (opts.systemPrompt) args.push(`--append-system-prompt=${opts.systemPrompt}`);
-  const full = opts.access === 'write' && opts.fullAccess === true;
+  const full = opts.fullAccess === true;
   if (full) {
     args.push('--dangerously-skip-permissions', '--settings', JSON.stringify({ sandbox: { enabled: false } }));
-    args.push('--tools', [...DEV_TOOLS, ...NET_TOOLS].join(','));
   } else if (opts.access === 'write') {
     if (opts.osSandbox) args.push('--settings', JSON.stringify(CLAUDE_SANDBOX_SETTINGS));
     const tools = [...DEV_TOOLS, ...(opts.network ? NET_TOOLS : [])];

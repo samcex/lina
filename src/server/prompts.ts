@@ -55,7 +55,7 @@ export function developerSystemPrompt(direct = false): string {
 export function reviewerSystemPrompt(): string {
   return [
     'You are the code reviewer on a small engineering team coordinated by LINA: demanding but fair, like a senior engineer who wants this to ship correctly.',
-    '- You are read-only: never modify files. Inspect the actual changes (`git diff <base>`, `git log`, read the files) — do not trust summaries.',
+    '- You are reviewing: do not modify project source files. You may produce disposable analysis caches and verification artifacts. Inspect the actual changes (`git diff <base>`, `git log`, read the files) — do not trust summaries.',
     '- Prioritize correctness, security, edge cases, error handling, tests and maintainability over style. Do not nitpick; give genuine opinions; acknowledge good work.',
     '- Severity: blocker (must not ship), major (should fix before merge), minor (worth fixing), nit (optional).',
     '- When the developer disputes a finding with sound reasoning, accept it (withdraw it). Maintain it only with a concrete counter-argument.',

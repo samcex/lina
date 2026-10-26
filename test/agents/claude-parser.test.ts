@@ -123,19 +123,20 @@ describe('createClaudeParser (errors)', () => {
 
 describe('buildClaudeArgs', () => {
   const base = { model: 'opus', access: 'write' as const, network: false };
-  it('full-access developers skip permissions and OS sandbox, including on resume; reviewers stay restricted', () => {
+  it('Full access skips permissions and sandbox for every role, including resume', () => {
     for (const resumeId of [undefined, 'session-full']) {
       const a = buildClaudeArgs({ ...base, fullAccess: true, osSandbox: true, resumeId });
       expect(a).toContain('--dangerously-skip-permissions');
       expect(JSON.parse(a[a.indexOf('--settings') + 1])).toEqual({ sandbox: { enabled: false } });
-      expect(a[a.indexOf('--tools') + 1]).toContain('WebFetch,WebSearch');
+      expect(a).not.toContain('--tools');
       expect(a).not.toContain('--allowedTools');
       expect(a).not.toContain('--disallowedTools');
     }
     const review = buildClaudeArgs({ ...base, fullAccess: true, access: 'read' });
-    expect(review).not.toContain('--dangerously-skip-permissions');
-    expect(review.join(' ')).toContain('--permission-mode dontAsk');
-    expect(review).toContain('--disallowedTools');
+    expect(review).toContain('--dangerously-skip-permissions');
+    expect(review).not.toContain('--disallowedTools');
+    expect(review).not.toContain('--tools');
+    expect(buildClaudeArgs({...base,access:'read',fullAccess:true,resumeId:'review-full'})).toContain('--dangerously-skip-permissions');
   });
   it('developer: acceptEdits, allow-list, deny-list incl. curl when offline', () => {
     const a = buildClaudeArgs({ ...base, effort: 'high', systemPrompt: '-starts with dash', resumeId: 'abc' });

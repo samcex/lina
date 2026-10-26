@@ -108,7 +108,7 @@ describe('automatic reviewer feedback handoff', () => {
     const snap = await completed(s.id);
     const feedback = calls(repo).filter((c) => c.step === 'feedback');
     expect(feedback).toHaveLength(1);
-    expect(feedback[0].opts).toMatchObject({ access: 'read', fullAccess: false });
+    expect(feedback[0].opts).toMatchObject({ access: 'read', fullAccess: true });
     expect(feedback[0].prompt).toContain('This reply is read-only');
     expect(readFileSync(join(repo, 'README.md'), 'utf8')).not.toContain('Fixed the minor issue');
     expect(snap.session.round).toBe(2);

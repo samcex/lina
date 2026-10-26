@@ -14,7 +14,7 @@ export interface TurnOptions {
   effort?: Effort;
   /** write: may edit files under cwd and run commands. read: inspection only, no edits. */
   access: 'write' | 'read';
-  /** Disable provider sandbox/permission prompts for developer turns. Reviewers remain read-only. */
+  /** Disable provider sandbox/permission prompts for every role. Role instructions still apply. */
   fullAccess?: boolean;
   /** Allow outbound network for commands the agent runs (where the CLI can enforce it). */
   network: boolean;

@@ -107,17 +107,20 @@ describe('createCodexParser (errors)', () => {
 
 describe('buildCodexArgs', () => {
   const base = { cwd: '/ws', model: 'gpt-6-luna', access: 'write' as const, network: false };
-  it('full-access developers bypass the sandbox on fresh and resumed turns; reviewers stay read-only', () => {
+  it('Full access uses --yolo for fresh/resumed developer and reviewer turns', () => {
     const fresh = buildCodexArgs({ ...base, fullAccess: true });
-    expect(fresh.join(' ')).toContain('-s danger-full-access -C /ws');
+    expect(fresh).toContain('--yolo');
+    expect(fresh).toContain('sandbox_mode="danger-full-access"');
+    expect(fresh).not.toContain('-s');
     expect(fresh).toContain('approval_policy="never"');
     expect(fresh.some((a) => a.startsWith('sandbox_workspace_write.network_access'))).toBe(false);
     const resumed = buildCodexArgs({ ...base, fullAccess: true, resumeId: 'thread-full' });
     expect(resumed).toContain('sandbox_mode="danger-full-access"');
     expect(resumed.slice(-2)).toEqual(['thread-full', '-']);
     const reviewer = buildCodexArgs({ ...base, fullAccess: true, access: 'read' });
-    expect(reviewer.join(' ')).toContain('-s read-only');
-    expect(reviewer).not.toContain('danger-full-access');
+    expect(reviewer).toContain('--yolo');
+    expect(reviewer).toContain('sandbox_mode="danger-full-access"');
+    expect(buildCodexArgs({...base,access:'read',fullAccess:true,resumeId:'review-full'})).toContain('--yolo');
   });
   it('new thread: explicit sandbox, -C, stdin prompt', () => {
     const a = buildCodexArgs({ ...base, effort: 'low', systemPrompt: 'Be "careful"\nline2' }, ['--disable', 'plugins']);

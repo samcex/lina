@@ -72,7 +72,7 @@ describe('direct project sessions', () => {
     expect(review.prompt).not.toContain('untracked owner work');
     expect(mockCalls.find((c) => c.opts.cwd === repo && c.step === 'implement')?.opts.systemPrompt).toContain('Preserve existing uncommitted changes');
     expect(mockCalls.find((c) => c.opts.cwd === repo && c.step === 'implement')?.opts).toMatchObject({ fullAccess: true, network: true });
-    expect(mockCalls.find((c) => c.opts.cwd === repo && c.step === 'review')?.opts.fullAccess).toBe(false);
+    expect(mockCalls.find((c) => c.opts.cwd === repo && c.step === 'review')?.opts).toMatchObject({ access: 'read', fullAccess: true, network: true });
     expect(readFileSync(join(repo, 'README.md'), 'utf8')).toBe('# unstaged owner work\n');
     expect(readFileSync(join(repo, 'owner.txt'), 'utf8')).toBe('untracked owner work\n');
     expect(sh(repo, 'git', ['ls-files', '--stage'])).toBe(index);
