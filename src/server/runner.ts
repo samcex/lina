@@ -1455,9 +1455,12 @@ Use LINA_GOAL_COMPLETE, LINA_GOAL_CONTINUE: <remaining in-scope work>, or LINA_G
     if (this.direct) {
       const note = this.approvalNote(unresolved);
       if (note) this.notice(note);
-      this.notice(await git.isDirty(this.ws)
-        ? 'Finished in your project. Uncommitted changes remain; send another message to continue.'
-        : 'Finished in your project. The working tree is clean; send another message to continue.');
+      const result = this.cfg.goal
+        ? this.state.goalStatus === 'waiting-review'
+          ? 'Goal implementation finished. Independent review will continue automatically after the usage limit resets.'
+          : 'Goal complete: independently verified. No further input is needed for this objective.'
+        : 'Finished in your project.';
+      this.notice(`${result} ${await git.isDirty(this.ws) ? 'Uncommitted changes remain.' : 'The working tree is clean.'}`);
       this.state.final = 'completed';
       this.setStep('done');
       this.persist();

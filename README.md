@@ -208,7 +208,11 @@ review-round limits start another repair cycle. Only genuinely missing input or
 external prerequisites pause the goal;
 Usage-limit failover and scheduled recovery work as for other tasks.
 Active goals also resume automatically after a daemon restart. `/goal` shows
-its objective and status. Use `/pause`, `/resume` and `/cancel` to control it.
+its objective and status. `/goal status`, `/goal resume`, `/goal pause` and
+`/goal cancel` also control the saved goal; they never create a new objective.
+Use `/pause`, `/resume` and `/cancel` for the current conversation.
+Completed goals display an independently verified completion status; remaining work
+and pending independent reviews continue automatically without another message.
 Explicit Pause/Cancel, project constraints and isolated-workspace approvals still apply.
 Goals sharing a project queue durably and continue when it becomes available.
 

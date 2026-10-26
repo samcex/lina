@@ -7,7 +7,7 @@ export interface SlashSpec { name: string; args?: string; desc: string; aliases?
 
 export const SLASH_COMMANDS: SlashSpec[] = [
   { name: 'menu', desc: 'Open navigation and tools (Ctrl+K when empty)' },
-  { name: 'goal', args: '[objective]', desc: 'Start a persistent structured goal, or show the current goal and status' },
+  { name: 'goal', args: '[objective|status|resume|pause|cancel]', desc: 'Start a persistent goal, show its status, or control the saved goal' },
   { name: 'new', args: '[prompt]', desc: 'Start a new session (optionally with a task)' },
   { name: 'sessions', desc: 'Switch to another session' },
   { name: 'scroll', args: '[on|off]', desc: 'Scroll with arrows/j/k; Esc returns to writing (Ctrl+G)' },

@@ -309,6 +309,35 @@ export class TuiStore {
   }
 
   async goal(objective?: string): Promise<void> {
+    const command = objective?.trim().toLowerCase();
+    if (command && ['resume', 'pause', 'cancel'].includes(command)) {
+      try {
+        const isGoal = (s?: Session) => !!s?.config.goal && !/^(resume|pause|cancel|status)$/i.test(s.config.goal.trim());
+        let session = this.state.view?.session;
+        if (!isGoal(session)) {
+          // Goal controls stay within the selected project. Ignore control words
+          // accidentally saved as objectives by older releases.
+          const goals = (await this.client.sessions({ projectId: this.state.project?.id }))
+            .filter((s) => s.projectId === this.state.project?.id && isGoal(s) && !this.state.deletedIds.includes(s.id))
+            .sort((a, b) => b.updatedAt - a.updatedAt);
+          session = goals.find((s) => !['completed', 'approved', 'rejected'].includes(s.status)) ?? goals[0];
+          if (session) await this.openSession(session.id);
+        }
+        if (!isGoal(session) || !session || this.state.view?.session.id !== session.id) { this.notice('warn', 'No saved goal could be opened in this project.', 'Start one with /goal <objective>.'); return; }
+        const navigation = this.navigation;
+        session = (await this.client.session(session.id)).session;
+        if (navigation !== this.navigation) return;
+        this.patchSession(session);
+        if (session.status === 'completed' && session.goalStatus === 'complete' && !session.retryAt) {
+          this.notice('info', 'Goal already complete: independently verified. No further input is needed for this objective.');
+          return;
+        }
+        if (command === 'resume' && session.status === 'running') { this.notice('info', 'The goal is already running autonomously.'); return; }
+        await this.control(command as 'resume' | 'pause' | 'cancel');
+      } catch (e) { this.fail(e, 'Could not control the goal'); }
+      return;
+    }
+    if (command === 'status') objective = undefined;
     if (!objective) {
       let session = this.state.view?.session;
       if (session) {

@@ -64,6 +64,21 @@ it('automatically continues remaining goal work without another owner message', 
   expect(calls.filter((c) => c.step === 'goal_check')).toHaveLength(2);
   expect(calls.some((c) => c.step === 'implement' && c.prompt.includes('Finish the requested input validation.'))).toBe(true);
   expect(snap.events.filter((e) => e.type === 'message' && e.actor === 'user')).toHaveLength(1);
+  const lastNotice = snap.events.filter((e) => e.type === 'message').filter((e) => e.data.kind === 'notice').at(-1);
+  expect(lastNotice?.data.text).toContain('Goal complete: independently verified. No further input is needed');
+  expect(lastNotice?.data.text).not.toContain('send another message');
+});
+it('clarifies legacy completed goals once across restarts without rerunning agents', async () => {
+  const s = await goal(); await api.send(s.id, 'Build hello'); await status(s.id, 'completed');
+  srv.manager.events.append(s.id, 'message', 'lina', { id:'legacy-finish',kind:'notice',text:'Finished in your project. The working tree is clean; send another message to continue.' });
+  const before = mockCalls.length;
+  await srv.close(); await boot();
+  const snap = await api.session(s.id);
+  expect(snap.session.goalStatus).toBe('complete');
+  expect(snap.events.filter(e=>e.type==='message').at(-1)?.data.text).toBe('Goal complete: independently verified. No further input is needed for this objective.');
+  await srv.close(); await boot();
+  expect((await api.session(s.id)).events).toHaveLength(snap.events.length);
+  expect(mockCalls.length).toBe(before);
 });
 it.each(['goal-blocked'])('pauses %s for owner input and resumes only on request', async (scenario) => {
   const s = await goal(scenario);

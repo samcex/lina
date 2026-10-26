@@ -115,6 +115,8 @@ export function App({ store, cwd, initial, onQuit, openUrl, size }: AppProps) {
   else if (status === 'awaiting_approval') banner = bold(fg(C.lina)('◆ Awaiting your approval')) + dim(' — ') + fg(C.ok)('/approve') + dim(' [squash|merge|branch] · ') + fg(C.err)('/reject') + dim(' · or type a message to request changes');
   else if (running) banner = fg(C.ok)('● ') + dim('Agents are working — messages are queued for the next turn boundary · ') + fg(C.text)('/interrupt <msg>') + dim(' cuts in · Ctrl+P pause') + (session && session.pendingMessages > 0 ? fg(C.warn)(` · ${session.pendingMessages} queued`) : '');
   else if (session?.goalResumeQueued) banner = fg(C.info)('◌ Goal queued') + dim(' — continues automatically when the project is available');
+  else if (status === 'completed' && session?.config.goal && session.retryAt) banner = fg(C.info)('◷ Independent review pending') + dim(` — continues automatically ${new Date(session.retryAt).toLocaleTimeString()} · /pause stops retry`);
+  else if (status === 'completed' && session?.goalStatus === 'complete') banner = fg(C.ok)('◆ Goal complete') + dim(' — independently verified · no further input needed');
   else if (status === 'paused') banner = fg(C.warn)('❚❚ Paused') + dim(' — /resume or Ctrl+P to continue');
   else if (status === 'failed' && view?.session.retryAt) banner = fg(C.warn)(session?.config.goal ? '◷ Goal will retry automatically' : '◷ Waiting for usage reset') + dim(` — automatic retry ${new Date(view.session.retryAt).toLocaleTimeString()} · /pause stops retry`);
   else if (status === 'interrupted' || status === 'failed') banner = fg(C.warn)(status === 'failed' ? '✖ Failed' : '◌ Interrupted') + dim(' — /resume continues from the last step · /retry re-runs the failed step');

@@ -53,6 +53,21 @@ export class SessionManager {
   /** Sessions left 'running' by a crash become 'interrupted' (resumable). */
   private recover(): void {
     for (const s of this.db.listSessions()) {
+      // Clarify the obsolete continuation prompt without rewriting conversation history
+      // or starting a completed goal again. The last-message guard makes this one-time.
+      if (s.config.goal && s.status === 'completed') {
+        const state = this.db.getSessionState<RunnerState>(s.id);
+        const lastMessage = this.db.events(s.id, 0, 8).filter((e) => e.type === 'message').at(-1);
+        if (lastMessage?.type === 'message' && lastMessage.actor === 'lina' && lastMessage.data.kind === 'notice' &&
+          /^Finished in your project\. (The working tree is clean|Uncommitted changes remain); send another message to continue\.$/.test(lastMessage.data.text)) {
+          const text = state?.goalStatus === 'complete'
+            ? 'Goal complete: independently verified. No further input is needed for this objective.'
+            : state?.goalStatus === 'waiting-review' && !state.automaticDisabled
+              ? 'Goal implementation finished. Independent review will continue automatically after the usage limit resets.'
+              : undefined;
+          if (text) this.events.append(s.id, 'message', 'lina', { id: rid(), text, kind: 'notice' });
+        }
+      }
       if (s.status !== 'running') continue;
       const r = this.runner(s.id);
       if (s.config.goal && !r.state.automaticDisabled) r.state.limitRetryPending = true;
