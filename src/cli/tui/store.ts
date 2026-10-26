@@ -486,18 +486,19 @@ export class TuiStore {
     if (!v) {
       this.set({ pendingConfig: { ...this.state.pendingConfig, ...config } });
       this.notice('success', `${what} — applies to the next session you start.`);
-      return;
+      return true;
     }
     try {
       this.patchSession(await this.client.updateSession(v.session.id, { config }));
       this.notice('success', `${what} — applies from the next turn.`);
-    } catch (e) { this.fail(e, 'Could not update the session'); }
+      return true;
+    } catch (e) { this.fail(e, 'Could not update the session'); return false; }
   }
 
   async setModel(agent: AgentId, model: string, effort?: Effort) {
-    const cur = this.currentConfig().models ?? this.state.settings?.models;
+    const cur = { ...this.state.settings?.models, ...this.currentConfig().models };
     const models = { ...(cur ?? {}), [agent]: { model, ...(effort ? { effort } : {}) } as AgentModelChoice } as Record<AgentId, AgentModelChoice>;
-    await this.patchConfig({ models }, `${agent === 'codex' ? 'Codex' : 'Claude'} → ${model}${effort ? ' · ' + effort : ''}`);
+    return this.patchConfig({ models }, `${agent === 'codex' ? 'Codex' : 'Claude'} → ${model}${effort ? ' · ' + effort : ''}`);
   }
 
   async swapRoles() {

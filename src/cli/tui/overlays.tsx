@@ -7,7 +7,7 @@ import { MODE_DESCRIPTION, MODE_LABEL, PHASE_LABEL, pipelineFor } from '../../sh
 import { AGENT_IDS } from '../../shared/types.js';
 import { CLI_MODES } from '../args.js';
 import { defaultTeam, formatTeamSpec, rolesForTeam, teamSummary, validateTeam } from '../team.js';
-import { bg, bold, dim, fg, italic, padAnsi, stripAnsi, truncateAnsi, wrapAnsi } from '../ansi.js';
+import { bg, bold, dim, fg, italic, padAnsi, stripAnsi, strWidth, truncateAnsi, wrapAnsi } from '../ansi.js';
 import { renderMarkdown } from '../markdown.js';
 import { AGENT_NAME, C, SEVERITY_COLOR, actorColor } from '../theme.js';
 import { findingScope, findingStatus, severityChip } from '../transcript.js';
@@ -447,76 +447,141 @@ export function SessionsOverlay({ store, width, height, onClose, mode = 'session
 }
 
 // ── models ──────────────────────────────────────────────────────────────────
-export function ModelsOverlay({ store, width, height, onClose }: Common) {
+export function ModelsOverlay({ store, width, height, onClose, initialAgent }: Common & { initialAgent?: AgentId }) {
   const st = useStore(store);
-  const [agent, setAgent] = useState<AgentId>('codex');
-  const [sel, setSel] = useState(0);
-  const [refresh, setRefresh] = useState(false);
+  const [agent, setAgent] = useState<AgentId>(initialAgent ?? store.currentConfig().developer ?? st.settings?.developer ?? 'codex');
+  const [selected, setSelected] = useState<Partial<Record<AgentId, string>>>({});
+  const [efforts, setEfforts] = useState<Record<string, Effort>>({});
+  const [query, setQuery] = useState('');
+  const [searching, setSearching] = useState(false);
+  const [refresh, setRefresh] = useState(0);
+  const [saving, setSaving] = useState(false);
+  const applying = useRef(false);
+  const [error, setError] = useState('');
   const [checks, setChecks] = useState<Record<string, ModelValidation | 'pending'>>({});
-  const res = useAsync(() => store.client.models(refresh), [refresh]);
+  const res = useAsync(() => store.client.models(refresh > 0), [refresh]);
   const cfg = store.currentConfig();
   const current = cfg.models?.[agent] ?? st.settings?.models[agent];
   const cat: AgentModels | undefined = res.data?.[agent];
-  const models: ModelInfo[] = cat?.models ?? [];
+  const models = (cat?.models ?? []).filter((m) => `${m.id} ${m.label ?? ''}`.toLowerCase().includes(query.trim().toLowerCase()));
+  const selectedId = selected[agent] ?? current?.model ?? cat?.defaultModel;
+  const sel = Math.max(0, models.findIndex((m) => m.id === selectedId));
+  const model = models[sel];
+  const effortFor = (m: ModelInfo): Effort | undefined => {
+    const effort = efforts[`${agent}:${m.id}`] ?? current?.effort;
+    return effort && m.efforts?.includes(effort) ? effort : m.defaultEffort;
+  };
   const w = innerW(width);
   const h = innerH(height);
-  useWheelSelection(setSel, models.length);
+  const prefixRows = 4;
+  const room = Math.max(1, h - prefixRows - 3);
+  const win = listWindow(models.length, room, sel);
+  const setSel = (update: (n: number) => number) => {
+    setSelected((s) => {
+      const index = Math.max(0, models.findIndex((m) => m.id === (s[agent] ?? selectedId)));
+      const m = models[Math.max(0, Math.min(models.length - 1, update(index)))];
+      return m ? { ...s, [agent]: m.id } : s;
+    });
+  };
+  useWheelSelection(setSel, models.length, !saving);
+  const switchAgent = (a: AgentId) => { if (!applying.current) { setAgent(a); setQuery(''); setSearching(false); setError(''); } };
+  const apply = async (m?: ModelInfo) => {
+    if (!m || applying.current) return;
+    applying.current = true; setSaving(true); setError('');
+    try {
+      if (await store.setModel(agent, m.id, effortFor(m))) onClose();
+      else setError(store.getState().notices.at(-1)?.text ?? 'Could not change the model. Try again.');
+    } catch (e) { setError(describeError(e).text); }
+    finally { applying.current = false; setSaving(false); }
+  };
   const validate = (m: ModelInfo) => {
     const k = `${agent}:${m.id}`;
+    if (checks[k] === 'pending') return;
     setChecks((c) => ({ ...c, [k]: 'pending' }));
     store.client.validateModel(agent, m.id).then(
       (v) => setChecks((c) => ({ ...c, [k]: v })),
       (e) => setChecks((c) => ({ ...c, [k]: { ok: false, checkedAt: Date.now(), error: describeError(e).text } })),
     );
   };
+  const cycleEffort = () => {
+    if (!model?.efforts?.length) return;
+    const choices = model.efforts;
+    const next = choices[(choices.indexOf(effortFor(model) as Effort) + 1) % choices.length];
+    setEfforts((s) => ({ ...s, [`${agent}:${model.id}`]: next }));
+  };
+  // The same labels and hit areas drive touch input and rendering.
+  const effortButtons: { label: string; start: number; end: number; effort: Effort }[] = [];
+  let effortX = strWidth('Effort: ');
+  for (const effort of model?.efforts ?? []) {
+    const label = `[${effort}]`;
+    effortButtons.push({ label, start: effortX, end: effortX + strWidth(label), effort });
+    effortX += strWidth(label) + 1;
+  }
+  const actions = [{ label: '[Use model]', run: () => void apply(model) }, { label: '[Search]', run: () => setSearching(true) },
+    { label: '[Refresh]', run: () => setRefresh((n) => n + 1) }, { label: '[Validate]', run: () => { if (model) validate(model); } }];
+  let actionX = 0;
+  const actionButtons = actions.map((action) => { const start = actionX; actionX += strWidth(action.label) + 1; return { ...action, start, end: actionX - 1 }; });
+  useMouse((event) => {
+    if (event.released || event.motion || event.button !== 0 || applying.current) return;
+    const row = event.y - 6, x = event.x - 3;
+    if (x < 0 || x >= w) return;
+    if (row === 0) {
+      if (x < 7) switchAgent('codex');
+      else if (x >= 9 && x < 17) switchAgent('claude');
+    } else if (row === 2) setSearching(true);
+    else if (row >= prefixRows && row < prefixRows + room) void apply(models[win.start + row - prefixRows]);
+    else if (row === prefixRows + room && model) {
+      const hit = effortButtons.find((b) => x >= b.start && x < b.end);
+      if (hit) setEfforts((s) => ({ ...s, [`${agent}:${model.id}`]: hit.effort }));
+    } else if (row === prefixRows + room + 1) actionButtons.find((b) => x >= b.start && x < b.end)?.run();
+  });
   useInput((input, key) => {
-    if (key.escape || (key.ctrl && input === 'c')) return onClose();
-    if (key.leftArrow || key.rightArrow || key.tab) { setAgent((a) => (a === 'codex' ? 'claude' : 'codex')); setSel(0); return; }
-    if (key.upArrow) setSel((s) => Math.max(0, s - 1));
-    if (key.downArrow) setSel((s) => Math.max(0, Math.min(models.length - 1, s + 1)));
-    if (input === 'r') { setRefresh(true); res.reload(); }
-    const m = models[sel];
-    if (!m) return;
-    if (input === 'v') validate(m);
-    if (input === 'e') {
-      const efforts = m.efforts ?? [];
-      if (!efforts.length) return;
-      const curEffort = current?.model === m.id ? current.effort : undefined;
-      const next = efforts[(efforts.indexOf(curEffort as Effort) + 1) % efforts.length];
-      void store.setModel(agent, m.id, next);
+    if (applying.current) return;
+    if (key.ctrl && input === 'c') return onClose();
+    if (key.escape) { if (searching || query) { setSearching(false); setQuery(''); } else onClose(); return; }
+    if (key.leftArrow || key.rightArrow || key.tab) { switchAgent(agent === 'codex' ? 'claude' : 'codex'); return; }
+    if (key.upArrow) { setSel((s) => s - 1); return; }
+    if (key.downArrow) { setSel((s) => s + 1); return; }
+    if (key.pageUp) { setSel((s) => s - room); return; }
+    if (key.pageDown) { setSel((s) => s + room); return; }
+    if (key.return) { void apply(model); return; }
+    if (searching) {
+      if (key.backspace || key.delete) setQuery((q) => q.slice(0, -1));
+      else if (input && !key.ctrl && !key.meta) setQuery((q) => q + input.replace(/[\r\n\t]/g, ''));
+      return;
     }
-    if (key.return) {
-      const keep = current?.effort && m.efforts?.includes(current.effort) ? current.effort : m.defaultEffort;
-      void store.setModel(agent, m.id, keep);
-    }
+    if (input === '/' || (key.ctrl && input === 'f')) setSearching(true);
+    else if (input === 'r') setRefresh((n) => n + 1);
+    else if (input === 'v' && model) validate(model);
+    else if (input === 'e') cycleEffort();
   });
   const tab = (a: AgentId) => (a === agent ? bg(actorColor(a))(fg(C.ink)(bold(` ${AGENT_NAME[a]} `))) : fg(actorColor(a))(` ${AGENT_NAME[a]} `));
-  const lines: string[] = [tab('codex') + '  ' + tab('claude') + '   ' + dim(cat ? `${cat.installed ? `installed${cat.version ? ' ' + cat.version : ''}` : fg(C.err)('not installed')} · via ${cat.discoveredVia}` : ''), ''];
+  const lines: string[] = [tab('codex') + '  ' + tab('claude'),
+    truncateAnsi(dim(`Current: ${current?.model ?? cat?.defaultModel ?? 'CLI default'}${current?.effort ? ' · ' + current.effort : ''}`), w),
+    truncateAnsi(searching ? fg(C.linaSoft)(`Search: ${query}▏`) : dim(query ? `Search: ${query}` : '[Search]  / to filter models'), w), ''];
   if (res.loading && !res.data) lines.push(dim('Discovering models…'));
-  else if (res.error) lines.push(...errorLines(res.error, w));
-  else if (cat?.error) lines.push(...wrapAnsi(fg(C.err)(cat.error), w));
-  if (models.length) {
-    const room = h - lines.length - 3;
-    const win = listWindow(models.length, room, sel);
-    models.slice(win.start, win.end).forEach((m, i) => {
+  else if (res.error) lines.push(truncateAnsi(fg(C.err)(describeError(res.error).text), w));
+  else if (!models.length) lines.push(truncateAnsi(dim(cat?.error ?? (query ? 'No matching models. Esc clears search.' : 'No models discovered. Refresh to try again.')), w));
+  else models.slice(win.start, win.end).forEach((m, i) => {
       const idx = win.start + i;
       const chk = checks[`${agent}:${m.id}`] ?? m.validation;
-      const mark = chk === 'pending' ? fg(C.warn)('…') : chk ? (chk.ok ? fg(C.ok)('✔') : fg(C.err)('✖')) : dim('·');
+      const mark = chk === 'pending' ? ' …' : chk ? (chk.ok ? fg(C.ok)(' ✔') : fg(C.err)(' ✖')) : '';
       const isCur = current?.model === m.id;
-      const label = `${isCur ? fg(actorColor(agent))('●') : ' '} ${mark} ${bold(fg(C.text)(m.id))}${m.label && m.label !== m.id ? dim(' ' + m.label) : ''}${m.id === cat?.defaultModel ? dim(' (default)') : ''}`;
-      const effortTxt = m.efforts?.length ? m.efforts.map((e) => (isCur && current?.effort === e ? fg(actorColor(agent))(e) : dim(e))).join(dim('/')) : '';
-      const right = `${effortTxt} ${dim(m.source)}`;
-      const line = spread(label, right, w - 1);
+      const label = `${idx === sel ? '›' : ' '} ${bold(fg(C.text)(m.id))}${isCur ? fg(actorColor(agent))(' ● current') : ''}${mark}`;
+      const line = truncateAnsi(label, w);
       lines.push(idx === sel ? bg('#2E2645')(padAnsi(line, w)) : line);
     });
-    const m = models[sel];
-    const chk = m ? checks[`${agent}:${m.id}`] ?? m.validation : undefined;
-    lines.push('');
-    if (chk && chk !== 'pending') lines.push(truncateAnsi(chk.ok ? fg(C.ok)(`✔ works${chk.resolvedModel ? ' → ' + chk.resolvedModel : ''}`) : fg(C.err)(`✖ ${chk.error ?? 'failed'}${chk.code ? ` (${chk.code})` : ''}`), w));
-    else if (m?.description) lines.push(truncateAnsi(dim(m.description), w));
-  } else if (res.data && !cat?.error) lines.push(dim('No models discovered for this agent.'));
+  while (lines.length < prefixRows + room) lines.push('');
+  const chosenEffort = model && effortFor(model);
+  lines.push('Effort: ' + (effortButtons.length ? effortButtons.map((b) => b.effort === chosenEffort ? bg(actorColor(agent))(fg(C.ink)(b.label)) : dim(b.label)).join(' ') : dim('CLI default')));
+  lines.push(saving ? fg(C.linaSoft)('Applying model…') : actionButtons.map((b, i) => i === 0 ? fg(C.linaSoft)(b.label) : dim(b.label)).join(' '));
+  const chk = model ? checks[`${agent}:${model.id}`] ?? model.validation : undefined;
+  const detail = error ? fg(C.err)(error) : chk === 'pending' ? dim('Checking model access…')
+    : chk ? chk.ok ? fg(C.ok)('✔ Model available') : fg(C.err)(chk.error ?? 'Model validation failed')
+      : dim(st.view ? 'Applies next turn. Current work keeps running.' : 'Applies to your next conversation.');
+  lines.push(truncateAnsi(detail, w));
   return (
-    <Frame onClose={onClose} title={`◆ Models ${dim(st.view ? '· this session' : '· next session')}`} hint="←/→ agent · ↑/↓ select · Enter use · e effort · v validate (live probe) · r refresh" width={width} height={height}>
+    <Frame onClose={saving ? undefined : onClose} title={`◆ Models ${dim(st.view ? '· this session' : '· next session')}`} hint="Tap model to use · ←/→ agent · Enter use · e effort" width={width} height={height}>
       <Lines lines={lines} height={h} />
     </Frame>
   );

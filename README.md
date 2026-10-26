@@ -319,7 +319,16 @@ Pick a mode with `--mode`, `/mode` in the terminal UI, or the mode menu in the w
 ## Models
 
 Each agent's model is chosen independently: `--codex-model`, `--claude-model`, `/model` in the
-TUI, or the selectors in the web header. The available models come from the providers themselves:
+TUI, or the selectors in the web header. `/model` and `/models` open the terminal picker
+at your developer's current model. Tap an agent tab, optionally choose an effort,
+then tap a model to apply it and return to your conversation. You can also use
+arrows and Enter. `/` or **Search** filters the list; Esc clears the search.
+`/models claude` and `/models codex` open an agent directly. For a quick change,
+use `/model claude sonnet` or `/models codex <model-id> high`.
+Changes apply next turn in the current conversation, or to the next conversation
+if none is open. `lina models set` saves defaults across conversations.
+
+The available models come from the providers themselves:
 
 * **Codex** comes from `codex debug models`, the official catalog for your account.
 * **Claude** comes from the aliases documented by `claude --help` (opus, sonnet, haiku, fable),

@@ -14,8 +14,8 @@ export const SLASH_COMMANDS: SlashSpec[] = [
   { name: 'history', args: '[earlier|event number]', desc: 'Open saved conversations; earlier or a number loads messages in this chat' },
   { name: 'search', args: '<text>', desc: 'Search all conversations and open a matching message' },
   { name: 'project', desc: 'Switch project' },
-  { name: 'model', args: 'codex|claude <id> [effort]', desc: 'Set an agent model for this session' },
-  { name: 'models', desc: 'Browse and validate available models' },
+  { name: 'model', args: '[codex|claude] [id] [effort]', desc: 'Pick a model, or set one directly' },
+  { name: 'models', args: '[codex|claude] [id] [effort]', desc: 'Tap to choose a model and effort for either agent' },
   { name: 'roles', desc: 'Swap developer and reviewer' },
   { name: 'mode', args: '[pair|architect|solo|parallel|compete|custom]', desc: 'Change the collaboration mode (no argument: picker)' },
   { name: 'team', args: '[plan=… critic=… dev=… review=…]', desc: 'Custom team: who plans, critiques, builds, reviews (no argument: picker)' },
@@ -52,7 +52,7 @@ export type SlashAction =
   | { type: 'search'; query: string }
   | { type: 'project' }
   | { type: 'model'; agent: AgentId; model: string; effort?: Effort }
-  | { type: 'models' }
+  | { type: 'models'; agent?: AgentId }
   | { type: 'roles' }
   | { type: 'mode'; mode: Mode; team?: TeamConfig }
   | { type: 'mode-picker' }
@@ -132,7 +132,6 @@ export function parseSlash(input: string): SlashAction {
     case 'search':
       return rest ? { type: 'search', query: rest } : { type: 'error', message: 'Enter text to search for', hint: usage('search') };
     case 'project': return noArgs({ type: 'project' });
-    case 'models': return noArgs({ type: 'models' });
     case 'roles': return noArgs({ type: 'roles' });
     case 'live': {
       if (!args.length) return { type: 'live' };
@@ -168,10 +167,12 @@ export function parseSlash(input: string): SlashAction {
       return { type: 'error', message: 'Expected last or a session id', hint: usage('resume') };
     case 'pause': case 'cancel': case 'retry': case 'review':
       return noArgs({ type: 'control', action: spec.name });
-    case 'model': {
+    case 'models': case 'model': {
       const [agent, model, effort] = args;
-      if (!agent || !model || args.length > 3) return { type: 'error', message: 'Missing model', hint: usage('model') };
+      if (!agent) return { type: 'models' };
       if (!(AGENTS as string[]).includes(agent)) return { type: 'error', message: `Unknown agent "${agent}"`, hint: 'Agents: codex, claude' };
+      if (!model) return { type: 'models', agent: agent as AgentId };
+      if (args.length > 3) return { type: 'error', message: 'Too many arguments', hint: usage(spec.name) };
       if (effort && !(EFFORTS as string[]).includes(effort)) return { type: 'error', message: `Unknown effort "${effort}"`, hint: `Efforts: ${EFFORTS.join(', ')}` };
       return { type: 'model', agent: agent as AgentId, model, ...(effort ? { effort: effort as Effort } : {}) };
     }
@@ -228,7 +229,7 @@ export function slashSuggestions(input: string): SlashSpec[] {
 export function argSuggestions(input: string): string[] {
   const team = /^\/(?:team|mode\s+custom)\s+((?:\S+\s+)*)(\S*)$/.exec(input);
   if (team) return teamTokenSuggestions(team[2], team[1].split(/\s+/).filter(Boolean));
-  const m2 = /^\/model\s+(codex|claude)\s+\S+\s+(\S*)$/.exec(input);
+  const m2 = /^\/models?\s+(codex|claude)\s+\S+\s+(\S*)$/.exec(input);
   if (m2) return EFFORTS.filter((e) => e.startsWith(m2[2]) && e !== m2[2]);
   const ap = /^\/approve\s+(\S+)\s+(\S*)$/.exec(input);
   if (ap) {
@@ -242,7 +243,7 @@ export function argSuggestions(input: string): string[] {
   const pool: string[] = cmd === 'mode' ? CLI_MODES
     : cmd === 'scroll' ? ['on', 'off']
     : cmd === 'approve' ? [...STRATEGIES, ...AGENTS]
-    : cmd === 'model' || cmd === 'diff' || cmd === 'choose' || cmd === 'live' ? AGENTS : [];
+    : cmd === 'model' || cmd === 'models' || cmd === 'diff' || cmd === 'choose' || cmd === 'live' ? AGENTS : [];
   return pool.filter((x) => x.startsWith(partial) && x !== partial);
 }
 

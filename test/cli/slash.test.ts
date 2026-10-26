@@ -28,6 +28,11 @@ describe('parseSlash', () => {
     expect(parseSlash('/new')).toEqual({ type: 'new' });
     expect(parseSlash('/model codex gpt-6.1-sol high')).toEqual({ type: 'model', agent: 'codex', model: 'gpt-6.1-sol', effort: 'high' });
     expect(parseSlash('/model claude opus')).toEqual({ type: 'model', agent: 'claude', model: 'opus' });
+    expect(parseSlash('/model')).toEqual({ type: 'models' });
+    expect(parseSlash('/models')).toEqual({ type: 'models' });
+    expect(parseSlash('/model codex')).toEqual({ type: 'models', agent: 'codex' });
+    expect(parseSlash('/models claude')).toEqual({ type: 'models', agent: 'claude' });
+    expect(parseSlash('/models claude sonnet high')).toEqual({ type: 'model', agent: 'claude', model: 'sonnet', effort: 'high' });
     expect(parseSlash('/mode architect')).toEqual({ type: 'mode', mode: 'architect' });
     expect(parseSlash('/approve merge')).toEqual({ type: 'approve', strategy: 'merge' });
     expect(parseSlash('/approve')).toEqual({ type: 'approve' });
@@ -43,7 +48,7 @@ describe('parseSlash', () => {
     expect(e).toMatchObject({ type: 'error', message: 'Unknown command /difff' });
     expect((e as { hint: string }).hint).toContain('/diff');
     expect(parseSlash('/model gemini x')).toMatchObject({ type: 'error' });
-    expect(parseSlash('/model codex')).toMatchObject({ type: 'error' });
+    expect(parseSlash('/models unknown')).toMatchObject({ type: 'error' });
     expect(parseSlash('/model codex m turbo')).toMatchObject({ type: 'error', message: expect.stringContaining('effort') });
     expect(parseSlash('/mode chaos')).toMatchObject({ type: 'error' });
     expect(parseSlash('/approve yolo')).toMatchObject({ type: 'error' });
@@ -66,6 +71,8 @@ describe('completion', () => {
     expect(complete('/mode ar', 8)).toEqual({ value: '/mode architect ', cursor: 16 });
     expect(argSuggestions('/approve ')).toEqual(['squash', 'merge', 'branch', 'codex', 'claude']);
     expect(argSuggestions('/model codex gpt x')).toEqual(['xhigh']);
+    expect(argSuggestions('/models cl')).toEqual(['claude']);
+    expect(argSuggestions('/models codex gpt x')).toEqual(['xhigh']);
   });
   it('completes @mentions anywhere', () => {
     expect(complete('@co', 3)).toEqual({ value: '@codex ', cursor: 7 });

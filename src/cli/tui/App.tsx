@@ -64,6 +64,7 @@ export function App({ store, cwd, initial, onQuit, openUrl, size }: AppProps) {
   const [sessionPicker, setSessionPicker] = useState<'sessions' | 'history' | 'resume'>('sessions');
   const [diffVariant, setDiffVariant] = useState<AgentId | undefined>(undefined);
   const [liveAgent, setLiveAgent] = useState<AgentId | undefined>(undefined);
+  const [modelAgent, setModelAgent] = useState<AgentId | undefined>(undefined);
   const [scroll, setScroll] = useState<Scroll>({ follow: true });
   const [scrollMode, setScrollMode] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -206,7 +207,7 @@ export function App({ store, cwd, initial, onQuit, openUrl, size }: AppProps) {
       case 'new': store.newDraft(); if (a.prompt) void store.createSession(a.prompt); break;
       case 'sessions': setSessionPicker('sessions'); setOverlay('sessions'); break;
       case 'project': setOverlay('project'); break;
-      case 'models': setOverlay('models'); break;
+      case 'models': setModelAgent(a.agent); setOverlay('models'); break;
       case 'diff': {
         if (a.variant && !view?.session.variants?.[a.variant]) {
           store.notice('warn', view ? `There is no ${AGENT_NAME[a.variant]} worktree in this session.` : 'No session yet — nothing to diff.', view ? 'Only parallel and compete sessions give each agent its own worktree. /diff shows the session diff.' : undefined);
@@ -456,7 +457,7 @@ export function App({ store, cwd, initial, onQuit, openUrl, size }: AppProps) {
       case 'help': return <HelpOverlay {...common} />;
       case 'sessions': return <SessionsOverlay {...common} mode={sessionPicker} />;
       case 'search': return <SearchOverlay {...common} query={searchQuery} onSelect={(hit) => void openSearchHit(hit)} />;
-      case 'models': return <ModelsOverlay {...common} />;
+      case 'models': return <ModelsOverlay {...common} initialAgent={modelAgent} />;
       case 'diff': return <DiffOverlay {...common} variant={diffVariant} />;
       case 'mode': return <ModeOverlay {...common} onTeam={() => setOverlay('team')} />;
       case 'team': return <TeamOverlay {...common} />;

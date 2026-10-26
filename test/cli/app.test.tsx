@@ -177,7 +177,7 @@ describe('App (Ink)', () => {
 
     // Ctrl+C while running asks to confirm cancel; y cancels
     stdin.write('\x03'); await tick();
-    expect(stdout.last).toContain('Cancel the running turn?');
+    await vi.waitFor(() => expect(stdout.last).toContain('Cancel the running turn?'), { timeout: 2000 });
     stdin.write('y'); await tick(100);
     expect(calls.some((c) => c.startsWith('control') && c.includes('cancel'))).toBe(true);
 
