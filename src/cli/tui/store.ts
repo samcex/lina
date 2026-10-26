@@ -347,7 +347,7 @@ export class TuiStore {
       this.notice('info', session?.config.goal
         ? `Goal: ${session.config.goal} · ${session.goalResumeQueued ? 'queued — continues automatically when the project is free' : session.goalStatus ?? session.status} (${session.status})`
         : 'No goal in this conversation. Start one with /goal <objective>.',
-      [session?.goalTask ? `Current item: ${session.goalTask}` : '', session?.goalDeferred?.length ? `Deferred evidence checks: ${session.goalDeferred.map((w) => w.key).join(', ')}` : '', 'Goals use structured implementation, tests and review. /pause · /resume · /cancel'].filter(Boolean).join('\n'));
+      [session?.goalRequirements?.length ? `Latest requirement audit: ${session.goalRequirements.filter(r=>r.status==='verified').length}/${session.goalRequirements.length} verified` : '', session?.goalTask ? `Current item: ${session.goalTask}` : '', session?.goalDeferred?.length ? `Deferred evidence checks: ${session.goalDeferred.map((w) => w.key).join(', ')}` : '', 'Goals use structured implementation, tests and review. /pause · /resume · /cancel'].filter(Boolean).join('\n'));
       return;
     }
     // A dedicated conversation preserves the current task and its settings/history.

@@ -1,7 +1,7 @@
 // LINA shared domain model. This file is the contract between the daemon,
 // the terminal UI and the web UI. Keep it dependency-free (runs in Node and browser).
 
-export const LINA_VERSION = '0.1.10';
+export const LINA_VERSION = '0.1.11';
 
 export type AgentId = 'codex' | 'claude';
 export const AGENT_IDS: AgentId[] = ['codex', 'claude'];
@@ -179,10 +179,13 @@ export interface RateLimitInfo {
   observedAt: number;
 }
 
+export interface GoalRequirement { key: string; requirement: string; status: 'verified' | 'remaining' | 'blocked'; evidence: string; next?: string; kind?: 'owner' | 'evidence' }
+
 export interface GoalDeferredIssue { key: string; reason: string; retryAt: number; attempts: number; kind?: 'evidence' | 'owner'; active?: boolean }
 
 export interface Session {
   goalTask?: string;
+  goalRequirements?: GoalRequirement[];
   goalDeferred?: GoalDeferredIssue[];
   /** Owner requested continuation while another goal owns this project. */
   goalResumeQueued?: boolean;
@@ -208,7 +211,7 @@ export interface Session {
   pendingMessages: number;
   /** Next automatic quota retry or deferred independent review; null when none. */
   retryAt?: number | null;
-  retryReason?: 'capacity' | 'usage';
+  retryReason?: 'capacity' | 'usage' | 'recovery' | 'configuration';
   mock?: boolean;
   /** parallel/compete: each agent's worktree. Absent for other modes (and before the split in parallel). */
   variants?: Partial<Record<AgentId, Variant>>;
@@ -366,6 +369,7 @@ export type ErrorCode =
   | 'model_unavailable' // model not found / not allowed on this account
   | 'rate_limited'
   | 'capacity'          // temporary provider/model capacity, not account quota
+  | 'transient'         // temporary network/service failure
   | 'timeout'
   | 'cli_missing'
   | 'sandbox'           // OS sandbox failed (bwrap/seccomp)

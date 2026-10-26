@@ -11,7 +11,8 @@ import { bold, dim, fg, padAnsi, strWidth, truncateAnsi } from './ansi.js';
 import type { ParsedArgs } from './args.js';
 import { AGENTS, parseSettingValue } from './args.js';
 import { formatTeamSpec, teamSummary } from './team.js';
-import { baseUrl, clientFor, discoverDaemon, ensureDaemon, startDaemon, stopDaemon, tailFile, DaemonError } from './daemon-control.js';
+import { enableService, disableService, serviceName } from './service.js';
+import { selfEntry, baseUrl, clientFor, discoverDaemon, ensureDaemon, startDaemon, stopDaemon, tailFile, DaemonError } from './daemon-control.js';
 import { formatAgo, modelLabel, shortId } from './layout.js';
 import { C } from './theme.js';
 import { doctorLines } from './tui/overlays.js';
@@ -284,6 +285,18 @@ export async function cmdDoctor(a: ParsedArgs) {
 export async function cmdDaemon(a: ParsedArgs) {
   const sub = a.positionals[0];
   switch (sub) {
+    case 'enable': {
+      const current=await discoverDaemon();
+      if(current.state==='running') {
+        const sessions=await clientFor(current.info).sessions();
+        if(sessions.some(s=>s.status==='running'))throw new CliError('Wait for active work to reach a turn boundary before enabling the boot service','Pause the session at a turn boundary, enable the service, then resume.');
+        await stopDaemon();
+      }
+      try {await enableService(selfEntry());const info=await startDaemon();out(`LINA supervision enabled: pid ${info.pid}. Goals recover after daemon crashes, logout and host restarts.`);}
+      catch(e){throw new CliError((e as Error).message,`Inspect systemctl --user status ${serviceName()}. No project files were removed.`);}
+      return;
+    }
+    case 'disable': await disableService();out('LINA boot service disabled and stopped. Saved goals and project files are preserved.');return;
     case 'run': {
       process.title = 'linad';
       const mod = (await import('../server/daemon.js')) as unknown as { runDaemon: () => Promise<unknown> };

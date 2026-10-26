@@ -244,7 +244,7 @@ export function DiffBar({ add, del }: { add: number; del: number }) {
 }
 
 const ERR_TITLE: Record<string, string> = {
-  auth: 'Not signed in', model_unavailable: 'Model unavailable', rate_limited: 'Rate limited', capacity: 'Model at capacity', timeout: 'Timed out',
+  auth: 'Not signed in', model_unavailable: 'Model unavailable', rate_limited: 'Rate limited', capacity: 'Model at capacity', transient: 'Provider temporarily unavailable', timeout: 'Timed out',
   cli_missing: 'CLI not installed', sandbox: 'Sandbox failure', crashed: 'Agent crashed', parse: 'Could not parse output',
   git: 'Git error', cancelled: 'Cancelled', internal: 'Internal error',
 };

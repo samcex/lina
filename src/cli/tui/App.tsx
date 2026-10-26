@@ -119,7 +119,7 @@ export function App({ store, cwd, initial, onQuit, openUrl, size }: AppProps) {
   else if (status === 'completed' && session?.config.goal && session.retryAt) banner = fg(C.info)('◷ Independent review pending') + dim(` — continues automatically ${new Date(session.retryAt).toLocaleTimeString()} · /pause stops retry`);
   else if (status === 'completed' && session?.goalStatus === 'complete') banner = fg(C.ok)('◆ Goal complete') + dim(' — independently verified · no further input needed');
   else if (status === 'paused') banner = fg(C.warn)('❚❚ Paused') + dim(' — /resume or Ctrl+P to continue');
-  else if ((status === 'failed' || status === 'interrupted') && view?.session.retryAt) banner = fg(C.warn)(session?.retryReason==='capacity' ? '◷ Waiting for model capacity' : session?.config.goal ? '◷ Goal will retry automatically' : '◷ Waiting for usage reset') + dim(` — automatic retry ${new Date(view.session.retryAt).toLocaleTimeString()} · /pause stops retry`);
+  else if ((status === 'failed' || status === 'interrupted') && view?.session.retryAt) banner = fg(C.warn)(session?.retryReason==='configuration' ? '◷ Waiting for provider setup — automatic recheck' : session?.retryReason==='recovery' ? '◷ Recovering automatically' : session?.retryReason==='capacity' ? '◷ Waiting for model capacity' : session?.config.goal ? '◷ Goal will retry automatically' : '◷ Waiting for usage reset') + dim(` — automatic retry ${new Date(view.session.retryAt).toLocaleTimeString()} · /pause stops retry`);
   else if (status === 'interrupted' || status === 'failed') banner = fg(C.warn)(status === 'failed' ? '✖ Failed' : '◌ Interrupted') + dim(' — /resume continues from the last step · /retry re-runs the failed step');
 
 

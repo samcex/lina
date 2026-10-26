@@ -331,7 +331,7 @@ export class SessionManager {
       cfg.testCommand = tc;
     }
     const stepMode = c.stepMode ?? base?.stepMode;
-    if (stepMode) cfg.stepMode = true;
+    if (stepMode && !cfg.goal) cfg.stepMode = true;
     const mock = base ? base.mock : (c.mock || mockEnabled());
     if (mock) cfg.mock = true;
     return cfg;
@@ -399,7 +399,9 @@ export class SessionManager {
         throw new LinaError(`Cannot switch a started session ${duo(cur) ? 'out of' : 'to'} ${duo(cur) ? cur : next.mode} mode`, 'bad_state', 409, 'Start a new session for that mode.');
       }
       const previousGoal = r.session.config.goal;
+      const changedModels=AGENT_IDS.filter(agent=>JSON.stringify(next.models[agent])!==JSON.stringify(r.session.config.models[agent]));
       r.session.config = next;
+      for(const agent of changedModels)r.providerModelChanged(agent);
       if (goalChanged) r.reframeGoal(previousGoal);
     }
     if (body?.title !== undefined) r.session.title = body.title.trim().slice(0, 200);
@@ -468,19 +470,20 @@ export class SessionManager {
     const msgId = rid();
     const status = r.session.status;
     const queue = r.busy || ['paused', 'interrupted', 'cancelled', 'failed'].includes(status);
-    if (!queue) r.assertAvailable();
+    if (!queue && !startingGoal) r.assertAvailable();
     if (r.session.title === DEFAULT_TITLE) r.session.title = titleFrom(text);
     const data = { id: msgId, text: raw, kind: 'chat' as const, ...(atts.length ? { attachments: atts } : {}), ...(mention ? { mention } : {}), ...(queue ? { queued: true } : {}) };
     this.events.append(id, 'message', 'user', data);
     if (queue) {
       r.enqueue({ id: msgId, text, target: mention, attachments: atts.length ? atts : undefined, interrupt: body.interrupt === true });
       if (body.interrupt && r.busy) r.interrupt();
+      if (r.session.config.goal && r.state.goalNeedsInput && status==='paused' && !r.busy) r.resume();
       return { ok: true, queued: true };
     }
     if (mention) r.consult(mention, text, atts);
     else if (r.state.step === 'idle' && !r.state.task) r.startTask(text, atts);
     else r.startRevision(text, atts);
-    return { ok: true, queued: false };
+    return { ok: true, queued: !!r.state.goalResumePending };
   }
 
   async addAttachment(id: string, name: string, mime: string, body: Readable): Promise<Attachment> {

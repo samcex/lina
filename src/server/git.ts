@@ -272,10 +272,10 @@ async function withWorktreeIndex<T>(ws: string, fn: (env: Record<string, string>
   }
 }
 
-/** Private snapshot object; never moves HEAD or touches the user's real index. */
-export async function snapshot(ws: string, ref: string): Promise<string> {
+/** Exact working-file content, including untracked files; leaves HEAD and the real index untouched. */
+export async function worktreeTree(ws: string): Promise<string> {
   const hash = (await headCommit(ws)).length === 64 ? 'sha256' : 'sha1';
-  const tree = (await withWorktreeIndex(ws, async (env) => {
+  return (await withWorktreeIndex(ws, async (env) => {
     // Git clean filters/EOL conversion must not alter the bytes kept for undo.
     const entries = (await gitOk(ws, ['ls-files', '--stage', '-z'], { env })).split('\0').filter(Boolean);
     const updates: string[] = [];
@@ -294,6 +294,11 @@ export async function snapshot(ws: string, ref: string): Promise<string> {
     if (updates.length) await gitInput(ws, ['update-index', '-z', '--index-info'], Buffer.from(updates.join('')), env);
     return gitOk(ws, ['write-tree'], { env });
   })).trim();
+}
+
+/** Private snapshot object; never moves HEAD or touches the user's real index. */
+export async function snapshot(ws: string, ref: string): Promise<string> {
+  const tree = await worktreeTree(ws);
   const commit = (await gitOk(ws, [...await identityArgs(ws), 'commit-tree', tree, '-m', 'LINA: working files snapshot'])).trim();
   await gitOk(ws, ['update-ref', ref, commit]);
   return commit;

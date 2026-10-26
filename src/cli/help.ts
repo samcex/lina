@@ -49,7 +49,7 @@ ${h('Usage')}
   ${c('lina settings')} [--json]          Show the defaults for new sessions (mode, team, sandboxes…)
   ${c('lina settings set')} <key> <value>   access (full|restricted) | rea (on|off) | mode | developer | max-rounds | team | test-sandbox | claude-sandbox
   ${c('lina doctor')} [--live]              Check CLIs, auth, sandbox, git (--live runs real probes)
-  ${c('lina daemon')} start|stop|restart|status|run|logs [-f] [-n N]
+  ${c('lina daemon')} start|stop|restart|status|run|logs|enable|disable [-f] [-n N]
                                     Manage the background daemon (agents keep running in it)
 
 ${h('Session options')} ${dim('(for lina, lina "<task>", lina attach)')}

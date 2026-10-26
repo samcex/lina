@@ -10,7 +10,7 @@
 import { existsSync } from 'node:fs';
 import type {
   AgentId, AgentStatus, ApplyStrategy, Attachment, Candidate, EventDataMap, Finding, FindingStatus, Phase, Project, Role,
-  Session, SessionStatus, Settings, TeamConfig, TestRun, TurnChange, UsageTotals, WorkPart, GoalDeferredIssue,
+  Session, SessionStatus, Settings, TeamConfig, TestRun, TurnChange, UsageTotals, WorkPart, GoalDeferredIssue, GoalRequirement,
 } from '../shared/types.js';
 import { AGENT_IDS, BLOCKING_SEVERITIES, teamOf } from '../shared/types.js';
 import type { AgentStreamEvent, TurnResult } from './agents/types.js';
@@ -28,6 +28,7 @@ import type { TurnHistory } from './undo.js';
 import { agentDisplayText } from '../shared/agent-display.js';
 import { usageResetHint } from './agents/limit-reset.js';
 import { isCapacityMessage } from './agents/errors.js';
+import { parseGoalAudit } from './goal-audit.js';
 import { parseGoalQueue, deferredIssues, type GoalTask } from './goal-queue.js';
 
 export type Step = 'idle' | 'chat' | 'plan' | 'plan_review' | 'implement' | 'integrate' | 'test' | 'review' | 'revise' | 'feedback' | 'verify' | 'approval' | 'done';
@@ -49,12 +50,18 @@ export interface RunnerState {
   goalRetryAt?: number;
   goalResumePending?: boolean;
   goalProtocolAttempts?: number;
+  goalRecoveryAttempts?: number;
+  goalRecoveryContext?: string;
   goalWaitAttempts?: number;
   goalRecheckPending?: boolean;
+  goalNeedsInput?: boolean;
   goalDeferred?: GoalDeferredIssue[];
   goalCurrentTask?: GoalTask;
+  goalRequirements?: GoalRequirement[];
   goalStatus?: 'working' | 'complete' | 'blocked' | 'waiting-review';
   goalCycles?: number;
+  goalProgressTree?: string;
+  goalStagnantCycles?: number;
   limitRetryAt?: number;
   limitRetryPending?: boolean;
   limitRetryAttempts?: number;
@@ -65,7 +72,7 @@ export interface RunnerState {
   independentReviewCompleted?: boolean;
   deferredReviewPasses?: number;
   lastReviewers?: AgentId[];
-  providerLimits?: Partial<Record<AgentId, { until: number; message: string; kind?: 'capacity' | 'usage'; resetAt?: number }>>;
+  providerLimits?: Partial<Record<AgentId, { until: number; message: string; kind?: 'capacity' | 'usage' | 'recovery' | 'configuration'; resetAt?: number }>>;
   lastWriters?: Record<string, AgentId>;
   lastDeveloperAgent?: AgentId;
   selfReviewed?: boolean;
@@ -175,7 +182,7 @@ class Halt extends Error { constructor(public reason: HaltReason) { super(reason
 class GoalProtocolError extends Error {}
 class GoalWait extends Error { constructor(reason: string, public retryAt?: number) { super(reason); } }
 class ProviderLimited extends Error {
-  constructor(public agent: AgentId, message: string, public partial?: string, public files?: string[], public resetAt?: number, public kind: 'capacity' | 'usage' = 'usage') { super(message); }
+  constructor(public agent: AgentId, message: string, public partial?: string, public files?: string[], public resetAt?: number, public kind: 'capacity' | 'usage' | 'recovery' | 'configuration' = 'usage') { super(message); }
 }
 interface TurnSpec {
   agent: AgentId; role: Role; phase: Phase; access: 'read' | 'write'; prompt: string; deliver: QueuedMessage[];
@@ -225,6 +232,7 @@ export class SessionRunner {
   private pauseRequested = false;
   private cancelRequested = false;
   private shutdownRequested = false;
+  private verificationTree?: string;
 
   constructor(public session: Session, public state: RunnerState, private deps: RunnerDeps) {
     let migratedCapacity = false;
@@ -238,7 +246,7 @@ export class SessionRunner {
     // Older releases discarded reset hints that had just elapsed, imposing up to an hour's delay.
     for (const agent of AGENT_IDS) {
       const limit = state.providerLimits?.[agent];
-      if (!limit || limit.kind === 'capacity' || limit.resetAt !== undefined || !state.limitRetryPending || state.automaticDisabled) continue;
+      if (!limit || (limit.kind && limit.kind !== 'usage') || limit.resetAt !== undefined || !state.limitRetryPending || state.automaticDisabled) continue;
       const last = deps.db.sql.prepare(`SELECT ts FROM events WHERE session_id = ? AND actor = ? AND type = 'turn'
         AND json_extract(data, '$.state') = 'end' AND json_extract(data, '$.ok') = 0 ORDER BY seq DESC LIMIT 1`).get(session.id, agent) as {ts:number} | undefined;
       const reset = last && usageResetHint(limit.message, Number(last.ts));
@@ -286,6 +294,7 @@ export class SessionRunner {
     this.session.goalResumeQueued = !!this.state.goalResumePending && !this.state.automaticDisabled;
     this.session.goalStatus = this.state.goalStatus;
     this.session.goalTask = this.state.goalCurrentTask?.task;
+    this.session.goalRequirements = this.state.goalRequirements;
     this.session.goalDeferred = this.state.goalDeferred;
     this.session.retryAt = this.retryTimestamp();
     this.session.retryReason = this.retryReason();
@@ -296,9 +305,12 @@ export class SessionRunner {
     }
   }
 
-  private retryReason(): 'capacity' | 'usage' | undefined {
-    if (!this.state.limitRetryPending || this.state.automaticDisabled || this.state.goalRetryAt) return;
-    const first = Object.values(this.state.providerLimits ?? {}).filter(l=>!!l).sort((a,b)=>a!.until-b!.until)[0];
+  private retryReason(): 'capacity' | 'usage' | 'recovery' | 'configuration' | undefined {
+    if (this.state.automaticDisabled) return;
+    if (this.state.goalRetryAt && this.state.goalRecoveryContext) return 'recovery';
+    if (!this.state.limitRetryPending || this.state.goalRetryAt) return;
+    const relevant = this.state.deferredReviewRunning && this.state.deferredReview ? [this.state.providerLimits?.[this.state.deferredReview.reviewer]] : Object.values(this.state.providerLimits ?? {});
+    const first = relevant.filter(l=>!!l && l.until>Date.now()).sort((a,b)=>a!.until-b!.until)[0];
     return first?.kind ?? (first ? 'usage' : undefined);
   }
 
@@ -374,6 +386,7 @@ export class SessionRunner {
   }
 
   private stopAutomatic(): void {
+    this.state.goalNeedsInput = false;
     this.state.goalResumePending = false;
     this.state.goalRetryAt = undefined;
     this.state.automaticDisabled = true;
@@ -414,6 +427,9 @@ export class SessionRunner {
 
   /** Changing a saved objective invalidates the old task/plan, but preserves work and findings. */
   reframeGoal(previousGoal?: string): void {
+    this.state.goalRequirements = undefined;
+    this.state.goalProgressTree = undefined;
+    this.state.goalStagnantCycles = 0;
     if (!this.cfg.goal || !this.state.task) return;
     if (!this.state.goalDeferred?.length && this.state.goalWaitAttempts && previousGoal) {
       this.state.goalDeferred = [{key:'prior-evidence',reason:`The previous investigation was waiting for external evidence: ${truncate(previousGoal,3000)}`,kind:'evidence',attempts:this.state.goalWaitAttempts,retryAt:this.state.goalRetryAt ?? Date.now()+15*60_000}];
@@ -437,7 +453,12 @@ export class SessionRunner {
   }
 
   startTask(text: string, attachments?: Attachment[]): void {
-    this.deps.assertCanStart?.();
+    let queued = false;
+    try { this.deps.assertCanStart?.(); }
+    catch (e) {
+      if (this.cfg.goal && e instanceof LinaError && e.code === 'busy') queued = true;
+      else throw e;
+    }
     this.state.automaticDisabled = false;
     this.state.peerHandoffs = 0;
     this.state.task = text;
@@ -446,6 +467,14 @@ export class SessionRunner {
     if (this.conversational) this.resetChat();
     this.setStep(this.firstStep());
     this.state.roundBase = this.state.round;
+    if (queued) {
+      this.state.goalResumePending = true;
+      this.state.goalRetryAt = Date.now()+1000;
+      this.session.status = 'interrupted';
+      this.notice('Goal saved and queued. It will start automatically when this project is available.');
+      this.setPhase('interrupted');
+      return;
+    }
     this.persist();
     this.start();
   }
@@ -505,6 +534,7 @@ export class SessionRunner {
   resume(): void {
     if (this.loop) return;
     this.state.automaticDisabled = false;
+    this.state.goalNeedsInput = false;
     this.state.goalRetryAt = undefined;
     if (this.cfg.goal && this.state.goalStatus === 'blocked') {
       this.state.goalRecheckPending = true;
@@ -528,6 +558,16 @@ export class SessionRunner {
     if (st === 'failed' && this.state.failedStep) this.state.step = this.state.failedStep; // keeps state.done: retry skips finished units
     if (['paused', 'interrupted', 'cancelled', 'failed'].includes(st)) this.start();
     else this.persist();
+  }
+
+  providerModelChanged(agent: AgentId): void {
+    const limit=this.state.providerLimits?.[agent];
+    if (!limit || limit.kind==='usage' || !limit.kind) return;
+    delete this.state.providerLimits![agent];
+    if(this.state.automaticDisabled)return;
+    if(this.state.limitRetryPending)this.state.limitRetryAt=Date.now()+1000;
+    for(const job of [this.state.deferredReview,this.state.deferredReview?.next])if(job?.reviewer===agent)job.at=Date.now()+1000;
+    this.persist();
   }
 
   extraReview(): void {
@@ -648,6 +688,13 @@ export class SessionRunner {
       if (this.cancelRequested) return this.markCancelled();
       if (this.pauseRequested) {
         this.pauseRequested = false;
+        // An answer can arrive while the question's final turn is still unwinding.
+        // Explicit Pause/Cancel clear goalNeedsInput, so they cannot enter this path.
+        if (this.cfg.goal && this.state.goalNeedsInput && this.state.queue.some(m=>!m.deliveredTo.length)) {
+          this.state.goalNeedsInput=false;this.state.automaticDisabled=false;
+          this.state.goalStatus='working';this.state.goalRecheckPending=true;
+          this.notice('Answer received. Continuing the goal automatically.');this.persist();continue;
+        }
         this.allAgents('idle');
         this.setStatus('paused');
         return;
@@ -701,7 +748,13 @@ export class SessionRunner {
         }
         log.error(`session ${this.id}: step ${step} failed`, e);
         const code = e instanceof LinaError && e.code === 'git' ? 'git' : 'internal';
-        this.append('error', 'lina', { code, message: errMessage(e), hint: 'Use retry to run the step again.' });
+        this.append('error', 'lina', { code, message: errMessage(e), hint: this.cfg.goal ? 'The saved goal will retry automatically.' : 'Use retry to run the step again.' });
+        if (this.cfg.goal && !this.state.automaticDisabled) {
+          const attempt = this.state.goalRecoveryAttempts = (this.state.goalRecoveryAttempts ?? 0)+1;
+          this.state.goalRecoveryContext = `LINA's ${step} step failed: ${errMessage(e)}. Diagnose the actual current state and continue the approved goal. Preserve existing files and avoid repeating completed actions.`;
+          this.state.goalRetryAt = Date.now()+Math.min(5*60_000,15000*2**Math.min(5,attempt-1));
+          this.notice(`Goal recovery scheduled automatically at ${new Date(this.state.goalRetryAt).toISOString()}.`);
+        }
         this.state.limitRetryPending = false; this.state.limitRetryAt = undefined;
         this.state.failedStep = step;
         // Preserve the direct question on unexpected failures as well.
@@ -904,6 +957,7 @@ export class SessionRunner {
     const key = providerKey(agent, role, worktree);
     return {
       task: this.cfg.goal ? `${this.cfg.goal}${this.state.goalCurrentTask ? `\nCurrent approved item: ${this.state.goalCurrentTask.task}\nScope evidence: ${this.state.goalCurrentTask.evidence}` : ''}` : this.state.task ?? '',
+      recovery: this.cfg.goal ? this.state.revisionRequest : undefined,
       taskAttachments: this.state.taskAttachments,
       plan: this.state.plan,
       planBy: this.state.planBy,
@@ -1124,7 +1178,7 @@ export class SessionRunner {
     } else {
       this.state.round += 1;
       this.setStep('review');
-      if (this.cfg.stepMode) this.pauseRequested = true;
+      if (this.cfg.stepMode && !this.cfg.goal) this.pauseRequested = true;
     }
     this.persist();
   }
@@ -1408,11 +1462,47 @@ export class SessionRunner {
     this.persist();
   }
 
-  private finishGoal(actual: AgentId, writer: AgentId): boolean {
+  private stopGoalForInput(reason: string): false {
+    this.stopAutomatic(); this.state.goalStatus = 'blocked'; this.state.goalNeedsInput = true;
+    this.notice(`Goal needs your input: ${reason}`); this.pauseRequested = true; this.persist(); return false;
+  }
+
+  private async finishGoal(actual: AgentId, writer: AgentId): Promise<boolean> {
+    const previous=this.state.goalRequirements ?? [];
+    const instructions=`Audit completion against EVERY requirement of the full owner goal. Inspect current implementation and verification artifacts; developer summaries and passing unrelated tests are insufficient. Include each explicit deliverable, behavior, command and verification gate. Preserve scope: do not replace a requirement with an easier one, omit one, invent new scope, or treat missing evidence as complete. A skipped test is not a verified behavior unless suitable alternate evidence is recorded. Keep previous keys and requirement wording unchanged, adding any omitted requirements. Return exactly one lina-goal-audit JSON block with {"requirements":[{"key":"stable-key","requirement":"owner requirement","status":"verified","evidence":"specific observed file/artifact/command and result"}]}. Use status:"remaining" with next:"concrete in-scope action and verification" for unfinished or unproven work. Use status:"blocked" with kind:"owner" or "evidence" only for an actual external dependency after useful local work is exhausted; ordinary diagnostics and fixes are already approved. No edits.\nFull owner goal: ${this.cfg.goal}\nPrevious requirements: ${JSON.stringify(previous)}\nDeferred issues: ${JSON.stringify(this.state.goalDeferred ?? [])}\nAccepted plan: ${this.state.plan ?? ''}\nLatest tests: ${JSON.stringify(this.state.lastTest ?? null)}`;
+    this.notice('Auditing completion evidence for every goal requirement.');
+    let audit=await this.turn({agent:other(writer),role:'reviewer',phase:'verifying',access:'read',reviewWriter:writer,deliver:[],prompt:`<!-- lina:step=goal_completion_audit round=${this.state.goalCycles ?? 0} -->\n${instructions}`});
+    let requirements: GoalRequirement[];
+    try { requirements=parseGoalAudit(audit.text,previous); }
+    catch {
+      audit=await this.turn({agent:other(writer),role:'reviewer',phase:'verifying',access:'read',reviewWriter:writer,deliver:[],prompt:`<!-- lina:step=goal_completion_repair round=${this.state.goalCycles ?? 0} -->\n${instructions}\nRepair format/coverage of the last audit only; do not rerun tools. Last result: ${audit.text}`});
+      try { requirements=parseGoalAudit(audit.text,previous); } catch { throw new GoalProtocolError('Completion evidence ledger is invalid or dropped a requirement'); }
+    }
+    this.state.goalRequirements=requirements; actual=audit.agent;
+    this.agentMessage(actual,'reviewer',audit,requirements.map(r=>`- ${r.status==='verified'?'Verified':r.status==='remaining'?'Remaining':'Blocked'}: ${r.requirement}\n  Evidence: ${r.evidence}`).join('\n'),'review');
+    this.persist();
+    const remaining=requirements.filter(r=>r.status==='remaining');
+    if(remaining.length)return this.continueGoal(remaining.map(r=>`${r.requirement}: ${r.next}`).join('\n'));
+    const blocked=requirements.filter(r=>r.status==='blocked');
+    if(blocked.length) {
+      const backlog=await this.checkGoalBacklog(other(writer),blocked.map(r=>`${r.key}: ${r.evidence}`).join('; '),blocked.some(r=>r.kind==='owner'));
+      if(backlog.next)return this.continueGoal(backlog.next.task,backlog.next);
+      if(backlog.inputReason)return this.stopGoalForInput(backlog.inputReason);
+      throw new GoalProtocolError('Completion audit and backlog disagree; recheck current evidence');
+    }
+    if (this.verificationTree !== await git.worktreeTree(this.ws)) {
+      this.state.goalStatus = 'working';
+      this.state.lastTest = undefined; this.state.lastTestCommit = undefined;
+      this.state.roundBase = this.state.round;
+      this.setStep('test');
+      this.notice('Files changed during the goal assessment. Testing and reviewing the updated files before completion.');
+      this.persist();
+      return false;
+    }
     this.state.goalProtocolAttempts = 0;
     this.state.goalWaitAttempts = 0;
     this.state.goalCurrentTask = undefined;
-    if (actual === writer) {
+    if (actual === writer || actual === this.state.lastWriters?.main) {
       this.state.goalStatus = 'waiting-review';
       this.notice('Goal completion awaits the independent reviewer when that provider is available again.');
     } else {
@@ -1423,7 +1513,11 @@ export class SessionRunner {
     return true;
   }
 
-  private continueGoal(remaining: string, task?: GoalTask): boolean {
+  private async continueGoal(remaining: string, task?: GoalTask): Promise<boolean> {
+    const tree = await git.worktreeTree(this.ws);
+    this.state.goalStagnantCycles = tree === this.state.goalProgressTree ? (this.state.goalStagnantCycles ?? 0)+1 : 0;
+    this.state.goalProgressTree = tree;
+    const replan = (this.state.goalStagnantCycles ?? 0) >= 2;
     this.state.goalProtocolAttempts = 0;
     this.state.goalWaitAttempts = 0;
     this.state.goalStatus = 'working';
@@ -1432,8 +1526,13 @@ export class SessionRunner {
     this.state.lastTest = undefined;
     this.state.lastTestCommit = undefined;
     this.resetForRevision();
-    if (task) {
-      this.state.goalCurrentTask = task;
+    if (task || replan) {
+      if (task) this.state.goalCurrentTask = task;
+      if (replan) {
+        this.state.revisionRequest += `\nThe previous repair cycles left the working files unchanged. Reassess the actual remaining requirement and failed evidence, choose a different concrete approach, and verify progress. Do not repeat the same ineffective steps or ask for routine approval. Previous result: ${this.state.lastDeveloperText ?? ''}`;
+        this.state.goalStagnantCycles = 0;
+        this.notice('Repeated goal cycles left files unchanged. Replanning from current evidence before another implementation attempt.');
+      }
       this.state.plan = undefined;
       this.state.critique = undefined;
       this.state.primed = {};
@@ -1476,18 +1575,25 @@ export class SessionRunner {
     if (!this.cfg.goal) return true;
     const blocked = this.state.unparsedReview || this.state.maxRoundsHit ||
       this.state.findings.some((f) => UNRESOLVED.includes(f.status)) || this.state.lastTest?.ok === false;
-    const stop = (reason: string) => {
-      this.stopAutomatic();
-      this.state.goalStatus = 'blocked';
-      this.notice(`Goal needs your input: ${reason}`);
-      this.pauseRequested = true;
-      this.persist();
-      return false;
-    };
+    const stop = (reason: string) => this.stopGoalForInput(reason);
     if (blocked) {
       const recheck = this.state.goalRecheckPending || this.state.goalStatus === 'blocked';
       this.state.goalRecheckPending = false;
       const pending = this.state.findings.filter((f) => UNRESOLVED.includes(f.status));
+      const tree=await git.worktreeTree(this.ws);
+      this.state.goalStagnantCycles=tree===this.state.goalProgressTree?(this.state.goalStagnantCycles??0)+1:0;
+      this.state.goalProgressTree=tree;
+      if((this.state.goalStagnantCycles??0)>=2) {
+        this.state.goalStagnantCycles=0;
+        this.state.revisionRequest=`Replan and resolve the approved goal from current evidence: ${this.cfg.goal}\nPrevious cycles did not change files. Choose a different concrete approach to these findings and verification results: ${JSON.stringify(pending)}\nTests: ${JSON.stringify(this.state.lastTest ?? null)}`;
+        this.state.plan=undefined;this.state.critique=undefined;this.state.primed={};
+        this.state.goalStatus='working';this.state.roundBase=this.state.round;
+        this.state.unparsedReview=false;this.state.maxRoundsHit=false;this.state.lastBlockingSig=undefined;
+        for(const f of pending)if(f.status==='escalated')this.setFinding(f,'open','lina','reopened','Replanning ineffective autonomous repair cycles.');
+        this.setStep(this.firstStep());
+        this.notice('Repeated review cycles made no file progress. Replanning the repair from current findings and verification evidence.');
+        this.persist();return false;
+      }
       const repairReview = recheck || this.state.unparsedReview || (pending.length > 0 && pending.every((f) => f.status === 'fixed' || f.status === 'disputed'));
       this.state.goalStatus = 'working';
       this.state.goalCycles = (this.state.goalCycles ?? 0) + 1;
@@ -1619,6 +1725,7 @@ Use LINA_GOAL_COMPLETE, LINA_GOAL_CONTINUE: <remaining in-scope work>, or LINA_G
     await this.checkpoint('LINA: final changes');
     const head = await git.headCommit(this.ws);
     if (this.direct || !(this.state.lastTest && this.state.lastTestCommit === head)) await this.runTestsNow(head);
+    if (this.cfg.goal) this.verificationTree = await git.worktreeTree(this.ws);
     if (!await this.checkGoal()) return;
     const summary = await this.composeSummary();
     this.append('message', 'lina', { id: rid(), text: summary, kind: 'summary' });
@@ -1781,18 +1888,18 @@ Use LINA_GOAL_COMPLETE, LINA_GOAL_CONTINUE: <remaining in-scope work>, or LINA_G
       if ((this.state.providerLimits?.[agent]?.until ?? 0) > Date.now()) continue;
       const takeover = agent !== spec.agent;
       if (takeover && !this.state.automaticDisabled && !this.cancelRequested) this.state.limitRetryPending = true;
-      if (takeover) this.notice(`${this.state.providerLimits?.[spec.agent]?.kind==='capacity' ? `${spec.agent}'s model is temporarily at capacity` : `A usage limit was reported for ${spec.agent}`}; ${agent} is taking over automatically in the same workspace.`);
+      if (takeover) this.notice(`${this.state.providerLimits?.[spec.agent]?.kind==='configuration' ? `${spec.agent} needs its provider setup corrected` : this.state.providerLimits?.[spec.agent]?.kind==='recovery' ? `${spec.agent} encountered a temporary failure` : this.state.providerLimits?.[spec.agent]?.kind==='capacity' ? `${spec.agent}'s model is temporarily at capacity` : `A usage limit was reported for ${spec.agent}`}; ${agent} is taking over automatically in the same workspace.`);
       const prefix = takeover ? `Provider takeover: you are ${agent}, continuing ${spec.agent}'s ${spec.role} work in ${this.wsOf(spec.variant)}. Keep the same task, role, candidate/worktree and owner permissions. Inspect current files and completed actions first; preserve partial edits and do not repeat completed steps. Do not assume an old provider's conversation ID or claim another agent's work.\nCurrent request: ${this.state.task ?? ''}\nPlan: ${this.state.plan ?? ''}\nRevision: ${this.state.revisionRequest ?? ''}\n${continuation}\n\n` : '';
       const attemptStarted = Date.now();
       try { return await this.runTurn({ ...spec, agent, requestedAgent: spec.agent, prompt: prefix + spec.prompt }); }
       catch (error) {
         if (!(error instanceof ProviderLimited)) throw error;
         const limits = this.deps.events.liveSnapshot(this.id).rateLimits[agent];
-        const resets = error.kind==='capacity' || (limits?.observedAt ?? 0) < attemptStarted ? [] : Object.values(limits?.windows ?? {}).filter((w) => w.status === 'rejected' || w.status === 'blocked' || w.status === 'denied' || (w.utilization >= 1 && w.status !== 'allowed')).map((w) => w.resetsAt ?? 0).filter((t) => t > Date.now());
+        const resets = error.kind!=='usage' || (limits?.observedAt ?? 0) < attemptStarted ? [] : Object.values(limits?.windows ?? {}).filter((w) => w.status === 'rejected' || w.status === 'blocked' || w.status === 'denied' || (w.utilization >= 1 && w.status !== 'allowed')).map((w) => w.resetsAt ?? 0).filter((t) => t > Date.now());
         const recentReset = error.kind==='usage' && error.resetAt !== undefined && error.resetAt <= Date.now() && error.resetAt > Date.now()-12*3600000;
-        if (error.resetAt && error.resetAt > Date.now()) resets.push(error.resetAt);
+        if (error.kind==='usage' && error.resetAt && error.resetAt > Date.now()) resets.push(error.resetAt);
         this.state.providerLimits ??= {};
-        this.state.providerLimits[agent] = { until: resets.length ? Math.max(...resets) : Date.now() + (error.kind==='capacity' || recentReset ? Math.min(120,15*2**Math.min(this.state.limitRetryAttempts??0,3))*1000 : Math.min(60, 5 * 2 ** Math.min(this.state.limitRetryAttempts ?? 0, 4)) * 60_000), message: error.message, kind:error.kind, resetAt:error.resetAt };
+        this.state.providerLimits[agent] = { until: resets.length ? Math.max(...resets) : Date.now() + (error.kind==='configuration' ? 5*60_000 : error.kind!=='usage' || recentReset ? Math.min(120,15*2**Math.min(this.state.limitRetryAttempts??0,3))*1000 : Math.min(60, 5 * 2 ** Math.min(this.state.limitRetryAttempts ?? 0, 4)) * 60_000), message: error.message, kind:error.kind, resetAt:error.resetAt };
         continuation = `Previous provider's partial reply: ${error.partial ?? ''}\nFiles already changed: ${error.files?.join(', ') ?? '(inspect the current workspace)'}`;
         this.agentStatus(agent, 'error', error.message, spec.role);
         this.persist();
@@ -1805,8 +1912,10 @@ Use LINA_GOAL_COMPLETE, LINA_GOAL_CONTINUE: <remaining in-scope work>, or LINA_G
     this.state.limitRetryAttempts = (this.state.limitRetryAttempts ?? 0) + 1;
     const waitingAgents = independentOnly ? [spec.agent] : AGENT_IDS;
     const capacity = waitingAgents.some(a=>this.state.providerLimits?.[a]?.kind==='capacity' && this.state.providerLimits[a]!.until>Date.now());
-    const why = capacity ? waitingAgents.map(a=>`${a}: ${this.state.providerLimits?.[a]?.kind==='capacity'?'model at capacity':'usage limit'}`).join('; ') : independentOnly ? 'The independent reviewer is still limited' : 'Both providers are limited';
-    this.append('error', 'lina', { code: capacity?'capacity':'rate_limited', message: `${why}. Work is preserved; automatic retry at ${new Date(this.state.limitRetryAt).toISOString()}.`, hint: 'LINA resumes automatically when a provider is available. Pause or Cancel stops automatic retry.' });
+    const recovering = waitingAgents.some(a=>this.state.providerLimits?.[a]?.kind==='recovery' && this.state.providerLimits[a]!.until>Date.now());
+    const configuration = waitingAgents.some(a=>this.state.providerLimits?.[a]?.kind==='configuration' && this.state.providerLimits[a]!.until>Date.now());
+    const why = capacity || recovering || configuration ? waitingAgents.map(a=>`${a}: ${this.state.providerLimits?.[a]?.kind==='capacity'?'model at capacity':this.state.providerLimits?.[a]?.kind==='recovery'?'temporary failure':this.state.providerLimits?.[a]?.kind==='configuration'?'provider setup needs attention':'usage limit'}`).join('; ') : independentOnly ? 'The independent reviewer is still limited' : 'Both providers are limited';
+    this.append('error', 'lina', { code: capacity?'capacity':recovering?'transient':configuration?'internal':'rate_limited', message: `${why}. Work is preserved; automatic retry at ${new Date(this.state.limitRetryAt).toISOString()}.`, hint: 'LINA resumes automatically when a provider is available. Pause or Cancel stops automatic retry.' });
     this.persist();
     throw new Halt('error');
   }
@@ -1854,7 +1963,7 @@ Use LINA_GOAL_COMPLETE, LINA_GOAL_CONTINUE: <remaining in-scope work>, or LINA_G
     };
     const start = Date.now();
     try {
-      if (this.direct && spec.access === 'write' && this.deps.history) change = await this.deps.history.begin(this.id, cwd, turnNo, agent, phase);
+      if (this.direct && (spec.access === 'write' || (this.cfg.goal && fullAccess)) && this.deps.history) change = await this.deps.history.begin(this.id, cwd, turnNo, agent, phase);
       if (change && this.state.consult) this.state.consultBase ??= change.before;
       if (change && this.state.step === 'chat') this.state.chatBase ??= change.before;
       if (change && this.state.step === 'feedback') {
@@ -1920,7 +2029,7 @@ Use LINA_GOAL_COMPLETE, LINA_GOAL_CONTINUE: <remaining in-scope work>, or LINA_G
         result = await adapter.runTurn({
           sessionId: this.id,
           reaEnabled: settings.reaEnabled,
-          prompt: [spec.prompt, P.conversationContext(cwd, this.deps.db.recentConversation(this.id, agent)
+          prompt: [spec.prompt, this.state.goalRecoveryContext, P.conversationContext(cwd, this.deps.db.recentConversation(this.id, agent)
             .filter((message) => !this.competing || phase !== 'implementing' || message.agent === 'user' || message.agent === agent)), this.state.undoNotice].filter(Boolean).join('\n\n'),
           cwd,
           model: choice.model,
@@ -1929,7 +2038,7 @@ Use LINA_GOAL_COMPLETE, LINA_GOAL_CONTINUE: <remaining in-scope work>, or LINA_G
           fullAccess,
           network: fullAccess || !!this.cfg.network,
           resumeId,
-          systemPrompt: (this.cfg.goal ? 'This is an autonomous, owner-approved goal. Continue implementation, bounded local reproduction/diagnostics, testing, review and explicitly requested publication within the saved goal and existing project permissions without asking for routine approval. Choose reasonable local investigation parameters yourself; do not ask whether to run a bounded in-scope repro. Use the accepted task and plan when interpreting continuation requests. Fix or reassess review findings yourself, including minor findings. Ask the owner only for genuinely missing facts/credentials, unavailable external prerequisites, or decisions that change scope or override explicit constraints. Do not treat a review round limit or a formatting error as an owner decision.\n' + `Full owner goal: ${this.cfg.goal}\nCurrent approved item: ${JSON.stringify(this.state.goalCurrentTask ?? null)}\nDeferred issues: ${JSON.stringify(this.state.goalDeferred ?? [])}\nContinue other approved unblocked work before parking the whole goal on a deferred issue.\n` : '') + (role === 'developer' ? `${P.developerSystemPrompt(this.direct)}\n${P.previewInstructions(this.id)}` : P.reviewerSystemPrompt()) + (settings.reaEnabled ? '\nREA MCP is enabled for this turn. Use its available MCP tools directly rather than treating /rea as a shell command. Use REA tools needed for your assigned work. Full access applies to all roles. During review, inspect independently and leave project source changes to the developer; analysis caches and verification artifacts are permitted. Honor explicit owner constraints for the project and hardware.' : ''),
+          systemPrompt: (this.cfg.goal ? 'This is an autonomous, owner-approved goal. Continue implementation, bounded local reproduction/diagnostics, testing, review and explicitly requested publication within the saved goal and existing project permissions without asking for routine approval. Choose reasonable local investigation parameters yourself; do not ask whether to run a bounded in-scope repro. Use the accepted task and plan when interpreting continuation requests. Fix or reassess review findings yourself, including minor findings. Ask the owner only for genuinely missing facts/credentials, unavailable external prerequisites, or decisions that change scope or override explicit constraints. Do not treat a review round limit or a formatting error as an owner decision.\n' + `Full owner goal: ${this.cfg.goal}\nCurrent approved item: ${JSON.stringify(this.state.goalCurrentTask ?? null)}\nRequirement evidence ledger: ${JSON.stringify(this.state.goalRequirements ?? [])}\nDeferred issues: ${JSON.stringify(this.state.goalDeferred ?? [])}\nContinue other approved unblocked work before parking the whole goal on a deferred issue.\n` : '') + (role === 'developer' ? `${P.developerSystemPrompt(this.direct)}\n${P.previewInstructions(this.id)}` : P.reviewerSystemPrompt()) + (settings.reaEnabled ? '\nREA MCP is enabled for this turn. Use its available MCP tools directly rather than treating /rea as a shell command. Use REA tools needed for your assigned work. Full access applies to all roles. During review, inspect independently and leave project source changes to the developer; analysis caches and verification artifacts are permitted. Honor explicit owner constraints for the project and hardware.' : ''),
           extraReadDirs: existsSync(attDir) ? [attDir] : undefined,
           images: images.length ? images : undefined,
           osSandbox: agent === 'claude' ? (fullAccess ? false : await this.claudeSandbox(settings, mock)) : undefined,
@@ -1978,7 +2087,7 @@ Use LINA_GOAL_COMPLETE, LINA_GOAL_CONTINUE: <remaining in-scope work>, or LINA_G
     if (result.error) endData.error = result.error.message;
     this.append('turn', agent, endData);
 
-    const wrote = spec.access === 'write' && (change ? change.files.length > 0 : await git.isDirty(cwd));
+    const wrote = change ? change.files.length > 0 : spec.access === 'write' && await git.isDirty(cwd);
     if (wrote) { this.state.lastWriters ??= {}; this.state.lastWriters[variant ?? 'main'] = agent; }
     const reason = this.abortReason ?? (ctrl.signal.aborted && !quotaExhausted ? 'cancel' : undefined);
     if (reason) {
@@ -1986,6 +2095,18 @@ Use LINA_GOAL_COMPLETE, LINA_GOAL_CONTINUE: <remaining in-scope work>, or LINA_G
       if (reason === 'interrupt') this.notice(`Interrupted ${agent}'s turn; re-running it with your message.`);
       this.persist();
       throw new Halt(reason);
+    }
+    if (!result.ok && this.cfg.goal && ['auth','model_unavailable','cli_missing','sandbox'].includes(result.error?.code ?? '')) {
+      this.notice(`${agent} is unavailable: ${result.error!.message}${result.error?.hint ? ' '+result.error.hint : ''} The other provider can continue; LINA will recheck availability automatically.`);
+      throw new ProviderLimited(agent,result.error!.message,result.text,change?.files.map(f=>f.path),undefined,'configuration');
+    }
+    const recoverable = !result.ok && (result.error?.code === 'transient' || (this.cfg.goal && ['timeout','crashed','internal'].includes(result.error?.code ?? 'internal')));
+    if (recoverable) {
+      // A broken or exhausted provider context must not make every future retry fail identically.
+      delete this.state.providers[key]; delete this.state.primed[key];
+      this.state.goalRecoveryContext = `The previous ${agent} turn stopped: ${result.error?.message ?? 'Provider failed'}. Inspect current files and completed actions, preserve partial edits, and continue the saved goal. Do not repeat completed side effects.`;
+      this.persist();
+      throw new ProviderLimited(agent, result.error?.message ?? 'Temporary provider failure', result.text, change?.files.map(f=>f.path), undefined, 'recovery');
     }
     if (quotaExhausted || (!result.ok && (result.error?.code === 'rate_limited' || result.error?.code === 'capacity'))) throw new ProviderLimited(agent, result.error?.message ?? 'Provider usage limit reached', result.text, change?.files.map((f) => f.path), result.error?.retryAt, result.error?.code==='capacity'?'capacity':'usage');
     if (!result.ok) {
@@ -2003,6 +2124,9 @@ Use LINA_GOAL_COMPLETE, LINA_GOAL_CONTINUE: <remaining in-scope work>, or LINA_G
     this.persist();
     if (role === 'developer') this.state.lastDeveloperAgent = agent;
     if (wrote && spec.requestedAgent && spec.requestedAgent !== agent && this.team.reviewers.length) this.deferIndependentReview(agent);
+    this.persist();
+    this.state.goalRecoveryAttempts = 0;
+    this.state.goalRecoveryContext = undefined;
     this.persist();
     return { text: result.text ?? '', result, msgId, model: result.model || choice.model, change, agent };
   }
@@ -2289,6 +2413,7 @@ Use LINA_GOAL_COMPLETE, LINA_GOAL_CONTINUE: <remaining in-scope work>, or LINA_G
   persist(): void {
     this.session.retryReason = this.retryReason();
     this.session.goalTask = this.state.goalCurrentTask?.task;
+    this.session.goalRequirements = this.state.goalRequirements;
     this.session.goalDeferred = this.state.goalDeferred;
     this.session.goalResumeQueued = !!this.state.goalResumePending && !this.state.automaticDisabled;
     this.session.goalStatus = this.state.goalStatus;

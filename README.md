@@ -228,6 +228,19 @@ for input. Pause/Cancel stop automatic work. Editing a started goal refreshes it
 task and plan on resume while preserving existing work, findings and deferred issues. The server rejects control words such as `resume` as
 new objectives, including requests from older terminal versions.
 
+On Linux, `lina daemon enable` keeps goals running after SSH logout and restores
+them after daemon crashes or a host restart. Enable it once while no turn is running.
+`lina daemon disable` stops and disables that service without deleting saved work.
+
+Crash, timeout and temporary connection failures also trigger takeover and durable
+recovery. Provider setup errors keep the usable agent working while LINA rechecks
+the unavailable one. A newly submitted goal queues if the project is busy.
+An answer to a goal's genuine missing-fact question resumes it automatically;
+explicit Pause/Cancel still require an explicit Resume. Completion requires a
+saved requirement-by-requirement evidence audit. Missing evidence continues work,
+and edits during assessment return through tests and review. Repeated ineffective
+cycles trigger replanning. See [autonomy behavior and acceptance checks](docs/AUTONOMY.md).
+
 ## REA tools
 
 To use an existing REA MCP registration from Codex or Claude Code:

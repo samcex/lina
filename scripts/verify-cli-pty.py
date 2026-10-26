@@ -170,7 +170,10 @@ const project=(await api.projects())[0];console.log(JSON.stringify(await api.cre
         else:
             raise AssertionError('The terminal /goal command did not finish with an independent completion check')
         terminal.command('/goal')
-        terminal.expect('Goal: Build hello')
+        # Ink may reuse the existing 'Goal' prefix with cursor movement. Assert the
+        # goal-specific status and evidence detail emitted by this command.
+        terminal.expect('Build hello · complete (completed)')
+        terminal.expect('Latest requirement audit: 1/1 verified')
         goal_sessions = json.loads(cli('sessions', '--all', '--json'))
         goals = [s for s in goal_sessions if s['config'].get('goal') == 'Build hello']
         assert len(goals) == 1 and goals[0]['status'] == 'completed'

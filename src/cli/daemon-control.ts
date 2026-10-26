@@ -2,6 +2,7 @@
 import { spawn } from 'node:child_process';
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync, rmSync, statSync, readSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { serviceEnabled, serviceAction } from './service.js';
 import { paths } from '../server/paths.js';
 import type { DaemonInfo } from '../shared/protocol.js';
 import { LinaClient } from '../shared/client.js';
@@ -119,6 +120,12 @@ export async function startDaemon(opts: { timeoutMs?: number; deps?: DiscoveryDe
   const deps = opts.deps ?? defaultDeps;
   const timeoutMs = opts.timeoutMs ?? 8000;
   mkdirSync(paths.home, { recursive: true, mode: 0o700 });
+  if (!opts.deps && await serviceEnabled()) {
+    await serviceAction('start');
+    const end=Date.now()+timeoutMs;
+    while(Date.now()<end){const found=await discoverDaemon();if(found.state==='running')return found.info;await sleep(120);}
+    throw new DaemonError('The supervised LINA daemon did not become healthy', 'Inspect systemctl --user status '+(await import('./service.js')).serviceName());
+  }
   const before = deps.readInfo();
   const { script, execArgv } = selfEntry();
   const logFd = openSync(paths.daemonLog, 'a', 0o600);
@@ -161,6 +168,9 @@ export async function waitForExit(pid: number, timeoutMs: number, isAlive = isPi
 
 /** SIGTERMs the daemon and waits for it to exit. Returns what happened. */
 export async function stopDaemon(timeoutMs = 6000): Promise<'stopped' | 'not_running' | 'killed'> {
+  if (await serviceEnabled()) {
+    const was=readDaemonInfo();await serviceAction('stop');if(was)cleanupInfo(was.pid);return was?'stopped':'not_running';
+  }
   const info = readDaemonInfo();
   if (!info || !isLinaDaemonPid(info.pid)) {
     if (info) cleanupInfo(info.pid);

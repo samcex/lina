@@ -128,9 +128,13 @@ describe('durable reset retries and independent review',()=>{
   await api.deleteSession(s.id);
  });
  it('defers a due job while another session owns the workspace',async()=>{
-  const at=Date.now()+400;const {repo,s}=await create({until:{claude:at,codex:at}});await api.send(s.id,'Build hello');await status(s.id,'failed');
+  const scenario:Scenario={until:{}};const {repo,s}=await create(scenario);
+  const at=Date.now()+5000;scenario.until={claude:at,codex:at};
+  await api.send(s.id,'Build hello');const waiting=await status(s.id,'failed');
   const busy=await create({until:{},hold:true},'solo',repo);await api.send(busy.s.id,'Build hello');
-  await waitUntil(()=>of(busy.s.id).length>0);await new Promise(r=>setTimeout(r,1700));
+  await waitUntil(()=>of(busy.s.id).length>0);
+  // Observe the actual due time with the workspace held, independent of repository setup speed.
+  await new Promise(r=>setTimeout(r,Math.max(0,waiting.session.retryAt!-Date.now()+500)));
   expect(of(s.id)).toHaveLength(2);
   await api.control(busy.s.id,'cancel');await status(s.id,'completed');
   await api.deleteSession(busy.s.id);await api.deleteSession(s.id);

@@ -8,6 +8,11 @@ describe('classifyError', () => {
     expect(classifyError('codex','Disk is at capacity').code).toBe('crashed');
     expect(classifyError('codex','Selected model is at capacity',{apiStatus:401}).code).toBe('auth');
   });
+  it('recognizes temporary service and transport failures separately from quota',()=>{
+    expect(classifyError('codex','stream disconnected: connection reset by peer').code).toBe('transient');
+    expect(classifyError('claude','request failed',{apiStatus:503}).code).toBe('transient');
+    expect(classifyError('codex','invalid token',{apiStatus:401}).code).toBe('auth');
+  });
   it('auth', () => {
     expect(classifyError('codex', 'Not logged in. Run codex login').code).toBe('auth');
     const e = classifyError('claude', 'Invalid API key · Please run /login');

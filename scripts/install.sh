@@ -23,6 +23,7 @@ else
   echo "  Existing $PHONE_TARGET preserved; install scripts/lina-phone manually if desired."
 fi
 case ":$PATH:" in *":$HOME/.local/bin:"*) ;; *) echo "  Add ~/.local/bin to your PATH to use 'lina'.";; esac
-# Restart a running daemon so it picks up the new build
-if [ -f "${LINA_HOME:-$HOME/.lina}/daemon.json" ]; then "$ROOT/bin/lina" daemon stop >/dev/null 2>&1 || true; fi
+# Preserve active work; the owner can restart after a turn boundary.
+if [ -f "${LINA_HOME:-$HOME/.lina}/daemon.json" ]; then echo "Existing daemon preserved. Restart after active work finishes: lina daemon restart"; fi
+echo "Linux boot/crash recovery: lina daemon enable"
 echo "Run: lina doctor --live   (then: lina)"

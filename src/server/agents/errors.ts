@@ -26,6 +26,7 @@ const MODEL_RE = /not supported when using codex with a chatgpt account|issue wi
 const RATE_RE = /usage limit|session limit|weekly limit|rate[ _-]?limit(?:ed|_error| exceeded| reached)?\b|too many requests|(?:status|http|code)[\s:=\"]*(?:429|529)\b|overloaded|quota (?:exceeded|exhausted)/i;
 const CAPACITY_RE = /\b(?:selected )?model (?:is )?(?:(?:currently|temporarily) )?at capacity\b|\boverloaded\b/i;
 export function isCapacityMessage(message: string): boolean { return CAPACITY_RE.test(message); }
+const TRANSIENT_RE = /ECONNRESET|ECONNREFUSED|EAI_AGAIN|ETIMEDOUT|socket hang up|connection (?:closed|reset|refused)|network (?:error|unreachable)|failed to (?:fetch|connect)|stream (?:disconnected|closed|error)|service unavailable|bad gateway|gateway timeout|(?:status|http|code)[\s:=\"]*(?:408|500|502|503|504)\b/i;
 const TIMEOUT_RE = /timed? ?out|timeout/i;
 const MISSING_RE = /\bENOENT\b|command not found|not found in PATH|No such file or directory.*(?:codex|claude)/i;
 
@@ -88,6 +89,9 @@ export function classifyError(agent: AgentId, message: string, extra: ErrorExtra
   if (status === 429 || status === 529 || RATE_RE.test(hay)) {
     const retryAt = usageResetHint(hay);
     return { ...mk('rate_limited', `${cli.name} hit a rate or usage limit`, 'LINA automatically switches providers and retries pending work after usage resets.'), ...(retryAt ? { retryAt } : {}) };
+  }
+  if ([408,500,502,503,504].includes(status ?? 0) || TRANSIENT_RE.test(hay)) {
+    return mk('transient', `${cli.name} temporarily lost its connection to the provider`, 'LINA preserves progress and retries automatically.');
   }
   if (TIMEOUT_RE.test(raw) && !raw.includes('{')) {
     return mk('timeout', `${cli.name} timed out`, 'Retry the turn; if it keeps happening check your network connection.');

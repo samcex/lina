@@ -188,6 +188,8 @@ export class MockAdapter implements AgentAdapter {
       writeFileSync(p, content);
     };
     switch (step) {
+      case 'goal_completion_audit': case 'goal_completion_repair':
+        return '```lina-goal-audit\n'+JSON.stringify({requirements:[{key:'requested-feature',requirement:'Build hello',status:'verified',evidence:'hello.js implementation and the successful node --test result.'}]})+'\n```';
       case 'goal_check':
         if (this.scenario === 'goal-blocked') return 'LINA_GOAL_BLOCKED: Choose the deployment target.';
         if (['goal-malformed','goal-malformed-once'].includes(this.scenario)) return 'Looks good to me.';

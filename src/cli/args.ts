@@ -280,12 +280,12 @@ export function validateCommand(p: ParsedArgs): void {
       throw new ArgError(`Unknown models subcommand: ${sub}`, near ? `Did you mean \`lina models ${near}\`?` : usage('lina models [--refresh] | validate <agent> <model> | set <agent> <model> [--effort e]'));
     }
     case 'daemon': {
-      const subs = ['start', 'stop', 'status', 'run', 'logs', 'restart'];
+      const subs = ['start', 'stop', 'status', 'run', 'logs', 'restart', 'enable', 'disable'];
       const sub = pos[0];
-      if (!sub) throw new ArgError('daemon needs a subcommand', usage('lina daemon start|stop|restart|status|run|logs'));
+      if (!sub) throw new ArgError('daemon needs a subcommand', usage('lina daemon start|stop|restart|status|run|logs|enable|disable'));
       if (!subs.includes(sub)) {
         const near = closest(sub, subs, 3);
-        throw new ArgError(`Unknown daemon subcommand: ${sub}`, near ? `Did you mean \`lina daemon ${near}\`?` : usage('lina daemon start|stop|restart|status|run|logs'));
+        throw new ArgError(`Unknown daemon subcommand: ${sub}`, near ? `Did you mean \`lina daemon ${near}\`?` : usage('lina daemon start|stop|restart|status|run|logs|enable|disable'));
       }
       if (pos.length > 1) throw new ArgError(`Unexpected argument: ${pos[1]}`);
       if ((p.flags.follow || p.flags.lines) && sub !== 'logs') throw new ArgError('--follow/--lines only apply to `lina daemon logs`');

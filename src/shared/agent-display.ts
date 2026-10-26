@@ -1,9 +1,9 @@
-const TAGS = ['review', 'response', 'split', 'chat', 'goal-queue'];
+const TAGS = ['review', 'response', 'split', 'chat', 'goal-queue', 'goal-audit'];
 
 /** Presentation only: the coordinator keeps and parses the original provider text. */
 export function agentDisplayText(text: string, streaming = false): string {
   let hidden = false;
-  const out = text.replace(/(^|\n)[ \t]*(`{3,}|~{3,})[ \t]*lina-(review|response|split|chat|goal-queue)[^\n]*\n([\s\S]*?)(?:\n[ \t]*\2[ \t]*(?=\n|$)|$)/gi,
+  const out = text.replace(/(^|\n)[ \t]*(`{3,}|~{3,})[ \t]*lina-(review|response|split|chat|goal-queue|goal-audit)[^\n]*\n([\s\S]*?)(?:\n[ \t]*\2[ \t]*(?=\n|$)|$)/gi,
     (_block, lead: string, _fence: string, tag: string, body: string) => {
       hidden = true;
       if (streaming || tag.toLowerCase() !== 'review') return lead;

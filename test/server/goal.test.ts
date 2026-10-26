@@ -8,13 +8,37 @@ const { LinaClient } = await import('../../src/shared/client.js');
 const { MockAdapter, mockCalls } = await import('../../src/server/agents/mock.js');
 const { setAdapterOverride } = await import('../../src/server/agents/index.js');
 const scenarios = new Map<string, string>();
+const goalFaults = new Map<string,number>();
 const holds = new Map<string, Record<string, number>>();
 setAdapterOverride((agent, ctx) => ({ id: agent, async runTurn(opts, emit) {
   const scenario = scenarios.get(ctx.sessionId!);
+  if (scenario?.startsWith('goal-config-') && agent==='codex' && opts.model!=='working-fixture-model') return {ok:false,text:'',usage:{},durationMs:0,error:{code:scenario.slice('goal-config-'.length) as 'auth'|'model_unavailable'|'cli_missing'|'sandbox',message:'Provider configuration is unavailable'}};
   const marker = /lina:step=(\w+) round=(\d+)/.exec(opts.prompt);
   if (scenario === 'goal-repro-blocked' && marker?.[1] === 'implement' && opts.prompt.includes('Run three bounded local reproduction attempts')) writeFileSync(join(opts.cwd, 'repro-evidence.txt'), 'Three bounded local attempts executed in this fixture.\n');
   if (scenario === 'goal-test-fix' && opts.prompt.includes('Fix the failing verification')) writeFileSync(join(opts.cwd,'hello.js'), 'exports.hello = name => { if (typeof name !== "string" || !name.trim()) throw new TypeError("name required"); return `Hello, ${name.trim()}!`; };\n');
+  if (scenario==='goal-transient' && marker?.[1]==='implement' && (goalFaults.get(ctx.sessionId!)??0)<2) {
+    goalFaults.set(ctx.sessionId!, (goalFaults.get(ctx.sessionId!)??0)+1);
+    writeFileSync(join(opts.cwd,'partial.txt'),'Preserved partial implementation.');
+    return {ok:false,text:'Partial implementation written.',usage:{},durationMs:0,error:{code:'timeout',message:'Provider stream timed out.'}};
+  }
+  if (scenario==='goal-no-progress' && marker?.[1]==='implement' && (goalFaults.get(ctx.sessionId!)??0)>0) return {ok:true,text:'Repeating the same unsuccessful plan without edits.',usage:{},durationMs:0};
+  if (scenario==='goal-stuck-review' && marker?.[1]==='revise') return {ok:true,text:'```lina-response\n{"items":[]}\n```',usage:{},durationMs:0};
   const result = await new MockAdapter(agent, { delayMs: 0, scenario, holdMs: holds.get(ctx.sessionId!) }).runTurn(opts, emit);
+  if (scenario==='goal-no-progress' && marker?.[1]==='goal_check' && (goalFaults.get(ctx.sessionId!)??0)<3) {
+    goalFaults.set(ctx.sessionId!,(goalFaults.get(ctx.sessionId!)??0)+1);
+    return {...result,text:'LINA_GOAL_CONTINUE: Finish the approved validation requirement.'};
+  }
+  if (scenario==='goal-evidence-missing' && ['goal_completion_audit','goal_completion_repair'].includes(marker?.[1]??'')) {
+    const missing=!existsSync(join(opts.cwd,'evidence.txt'));
+    return {...result,text:'```lina-goal-audit\n'+JSON.stringify({requirements:[{key:'verification',requirement:'Verify the requested behavior',status:missing?'remaining':'verified',evidence:missing?'The required verification artifact is missing.':'evidence.txt contains the verified result.',...(missing?{next:'Produce evidence.txt from the relevant verification.'}:{})}]})+'\n```'};
+  }
+  if (scenario==='goal-evidence-missing' && marker?.[1]==='implement' && opts.prompt.includes('Produce evidence.txt')) writeFileSync(join(opts.cwd,'evidence.txt'),'Verified behavior with retained evidence.');
+  if (scenario==='goal-audit-malformed' && ['goal_completion_audit','goal_completion_repair'].includes(marker?.[1]??'')) return {...result,text:'I think it is done.'};
+  if (scenario==='goal-assessment-write' && marker?.[1]==='goal_check' && !existsSync(join(opts.cwd,'late-feature.js'))) {
+    writeFileSync(join(opts.cwd,'late-feature.js'),'exports.ready = true;\n');
+    return {...result,text:'LINA_GOAL_COMPLETE'};
+  }
+
   const backlog = ['goal-backlog','goal-backlog-restart','goal-backlog-input'].includes(scenario!);
   if (backlog && marker?.[1] === 'implement' && !opts.signal?.aborted && opts.systemPrompt?.includes('"key":"remaining-feature"')) writeFileSync(join(opts.cwd,'backlog-feature.txt'),'Approved feature implemented and verified in the fixture.\n');
   if (backlog && marker?.[1] === 'goal_check' && marker[2] === '0') return {...result,text:'LINA_GOAL_BLOCKED: Packaging needs a future failure trace.'};
@@ -32,6 +56,7 @@ setAdapterOverride((agent, ctx) => ({ id: agent, async runTurn(opts, emit) {
     if (scenario === 'goal-wait') return { ...result, text: 'LINA_GOAL_WAIT: Local reproduction attempts are exhausted; recheck retained logs for new evidence before further bounded investigation.' };
     if (scenario === 'goal-blocker-malformed') return { ...result, text: 'Perhaps ask the owner.' };
   }
+  if (scenario==='goal-stuck-review' && marker?.[1]==='review' && Number(marker[2])<=6) return {...result,text:'```lina-review\n'+JSON.stringify({verdict:'request_changes',summary:'Still missing',findings:[{...(Number(marker[2])>1?{id:'F1'}:{}),severity:'major',title:'Unresolved behavior',detail:'The same behavior remains missing.'}],resolved:[],withdrawn:[]})+'\n```'};
   if (marker?.[1] === 'review' && scenario === 'goal-test-fix') return { ...result, text: '```lina-review\n'+JSON.stringify({verdict:'approve',summary:'Reviewed',findings:[],resolved:[],withdrawn:[]})+'\n```' };
   if (marker?.[1] === 'review' && marker[2] === '1' && ['minor-only','nit-only'].includes(scenario!)) {
     return { ...result, text: '```lina-review\n'+JSON.stringify({verdict:'request_changes',summary:'Small fix remains',findings:[{severity:scenario==='minor-only'?'minor':'nit',title:'Polish the compact warning',detail:'Keep it concise.'}],resolved:[],withdrawn:[]})+'\n```' };
@@ -294,4 +319,130 @@ it('validates goal settings instead of silently ignoring them', async () => {
   for (const word of ['resume','pause','cancel','status']) {
     await expect(api.createSession({projectId:project.id,config:{goal:word,mode:'architect',interactionMode:'workflow'}})).rejects.toThrow('not a new objective');
   }
+});
+
+it('starts a fresh goal automatically after a busy project is released, with one owner message',async()=>{
+  const first=await goal();holds.set(first.id,{goal_check:60_000});
+  await api.send(first.id,'Build hello');await waitUntil(()=>mockCalls.some(c=>c.opts.cwd===first.workspacePath&&c.step==='goal_check'));
+  const second=await api.createSession({projectId:first.projectId,config:{mock:true,mode:'architect',interactionMode:'workflow',goal:'Build hello'}});
+  const result=await api.send(second.id,'Build hello');expect(result.queued).toBe(true);
+  expect((await api.session(second.id)).session.goalResumeQueued).toBe(true);
+  await api.control(first.id,'cancel');await srv.close();holds.delete(first.id);await boot();
+  await waitUntil(()=>srv.manager.db.getSession(second.id)?.status==='completed',20000);
+  const snap=await api.session(second.id);expect(snap.session.goalStatus).toBe('complete');
+  expect(snap.events.filter(e=>e.type==='message'&&e.actor==='user')).toHaveLength(1);
+});
+it('autonomous goals ignore inherited step mode while explicit pause still stops work',async()=>{
+  const s=await goal();await api.updateSession(s.id,{config:{stepMode:true}});
+  await api.send(s.id,'Build hello');expect((await status(s.id,'completed')).session.goalStatus).toBe('complete');
+  const next=await goal();holds.set(next.id,{implement:60_000});await api.send(next.id,'Build hello');
+  await waitUntil(()=>mockCalls.some(c=>c.opts.cwd===next.workspacePath&&c.step==='implement'));
+  await api.control(next.id,'pause');holds.delete(next.id);await api.control(next.id,'cancel');
+  expect((await api.session(next.id)).session.status).toBe('cancelled');
+});
+it('preserves partial work and automatically recovers timed-out goal providers after restart',async()=>{
+  const s=await goal('goal-transient');await api.send(s.id,'Build hello');const waiting=await status(s.id,'failed');
+  expect(waiting.session.retryReason).toBe('recovery');expect(waiting.session.retryAt).toBeGreaterThan(Date.now());
+  const state=srv.manager.db.getSessionState<any>(s.id)!;
+  expect(state.goalRecoveryContext).toContain('preserve partial edits');
+  for(const limit of Object.values(state.providerLimits) as {until:number}[])limit.until=Date.now()-1;
+  state.limitRetryAt=Date.now()+200;srv.manager.db.updateSession(waiting.session,state);await srv.close();await boot();
+  await waitUntil(()=>srv.manager.db.getSession(s.id)?.status==='completed',20000);
+  const snap=await api.session(s.id);expect(snap.session.goalStatus).toBe('complete');
+  expect(readFileSync(join(s.workspacePath,'partial.txt'),'utf8')).toContain('Preserved');
+  expect(snap.events.filter(e=>e.type==='message'&&e.actor==='user')).toHaveLength(1);
+});
+it('rejects completion when the checker edits working files, then tests and reviews the new source',async()=>{
+  const s=await goal('goal-assessment-write');await api.send(s.id,'Build hello');const snap=await status(s.id,'completed');
+  expect(snap.session.goalStatus).toBe('complete');
+  expect(snap.events.some(e=>e.type==='message'&&e.data.text.startsWith('Files changed during the goal assessment'))).toBe(true);
+  const calls=mockCalls.filter(c=>c.opts.cwd===s.workspacePath&&c.step==='goal_check');expect(calls).toHaveLength(2);
+  const changes=await api.turnChanges(s.id);expect(changes.some(c=>c.agent==='claude'&&c.files.some(f=>f.path==='late-feature.js'))).toBe(true);
+  const guard=snap.events.find(e=>e.type==='message'&&e.data.text.startsWith('Files changed during'))!;
+  expect(snap.events.some(e=>e.type==='tests'&&e.seq>guard.seq&&e.data.ok)).toBe(true);
+  expect(snap.events.filter(e=>e.type==='message'&&e.actor==='user')).toHaveLength(1);
+});
+
+it('replans repeated ineffective cycles instead of endlessly replaying the same implementation',async()=>{
+  const s=await goal('goal-no-progress');await api.send(s.id,'Build hello');const snap=await status(s.id,'completed');
+  expect(snap.session.goalStatus).toBe('complete');
+  expect(mockCalls.filter(c=>c.opts.cwd===s.workspacePath&&c.step==='plan').length).toBeGreaterThanOrEqual(2);
+  expect(snap.events.some(e=>e.type==='message'&&e.data.text.startsWith('Repeated goal cycles left files unchanged'))).toBe(true);
+  expect(snap.events.filter(e=>e.type==='message'&&e.actor==='user')).toHaveLength(1);
+});
+
+it('automatically continues after the owner answers a genuine missing fact without a second resume command',async()=>{
+  const s=await goal('goal-blocked');await api.send(s.id,'Build hello');await status(s.id,'paused');
+  expect(srv.manager.db.getSessionState<any>(s.id)!.goalNeedsInput).toBe(true);
+  await srv.close();await boot();scenarios.set(s.id,'default');
+  await api.send(s.id,'Use the existing local deployment target.');
+  expect((await status(s.id,'completed')).session.goalStatus).toBe('complete');
+});
+it.each(['pause','cancel'] as const)('a goal answer never overrides explicit %s',async(action)=>{
+  const s=await goal('goal-blocked');await api.send(s.id,'Build hello');await status(s.id,'paused');
+  await api.control(s.id,action);const count=mockCalls.length;
+  await api.send(s.id,'Use the existing local deployment target.');await srv.close();await boot();
+  await new Promise(r=>setTimeout(r,250));
+  expect(mockCalls).toHaveLength(count);expect((await api.session(s.id)).session.retryAt).toBeNull();
+  expect(srv.manager.db.getSessionState<any>(s.id)!.automaticDisabled).toBe(true);
+});
+
+it('requires evidence for every requirement and continues missing verification after an initial completion claim',async()=>{
+  const s=await goal('goal-evidence-missing');await api.send(s.id,'Build hello');const snap=await status(s.id,'completed');
+  expect(snap.session.goalStatus).toBe('complete');expect(existsSync(join(s.workspacePath,'evidence.txt'))).toBe(true);
+  expect(snap.session.goalRequirements).toEqual([{key:'verification',requirement:'Verify the requested behavior',status:'verified',evidence:'evidence.txt contains the verified result.'}]);
+  expect(mockCalls.filter(c=>c.opts.cwd===s.workspacePath&&c.step==='goal_completion_audit')).toHaveLength(2);
+  expect(mockCalls.some(c=>c.opts.cwd===s.workspacePath&&c.step==='implement'&&c.opts.systemPrompt?.includes('Verify the requested behavior'))).toBe(true);
+  expect(snap.events.filter(e=>e.type==='message'&&e.actor==='user')).toHaveLength(1);
+});
+it('automatically retries a malformed completion audit after restart instead of declaring success',async()=>{
+  const s=await goal('goal-audit-malformed');await api.send(s.id,'Build hello');const snap=await status(s.id,'failed');
+  expect(snap.session.goalStatus).toBe('working');expect(snap.session.retryAt).toBeGreaterThan(Date.now());
+  const state=srv.manager.db.getSessionState<any>(s.id)!;state.goalRetryAt=Date.now()+200;
+  srv.manager.db.updateSession(snap.session,state);await srv.close();scenarios.set(s.id,'default');await boot();
+  await waitUntil(()=>srv.manager.db.getSession(s.id)?.status==='completed',20000);
+  expect((await api.session(s.id)).session.goalRequirements?.every(r=>r.status==='verified')).toBe(true);
+});
+
+it.each(['auth','model_unavailable','cli_missing','sandbox'])('continues with the usable provider after goal %s and rechecks independent review after a model correction',async(code)=>{
+  const s=await goal('goal-config-'+code);await api.send(s.id,'Build hello');const snap=await status(s.id,'completed');
+  expect(snap.session.goalStatus).toBe('waiting-review');expect(existsSync(join(s.workspacePath,'hello.js'))).toBe(true);
+  expect(srv.manager.db.getSessionState<any>(s.id)!.providerLimits.codex.kind).toBe('configuration');
+  expect(snap.events.some(e=>e.type==='message'&&e.data.text.includes('needs its provider setup corrected'))).toBe(true);
+  expect(snap.events.some(e=>e.type==='message'&&e.data.text.includes('A usage limit was reported for codex'))).toBe(false);
+  await api.updateSession(s.id,{config:{models:{...s.config.models,codex:{model:'working-fixture-model'}}}});
+  await waitUntil(()=>srv.manager.db.getSessionState<any>(s.id)?.goalStatus==='complete',20000);
+  expect((await api.session(s.id)).session.goalRequirements?.every(r=>r.status==='verified')).toBe(true);
+});
+
+it('changes approach when review and repair cycles make no file progress',async()=>{
+  const s=await goal('goal-stuck-review');await api.send(s.id,'Build hello');const snap=await status(s.id,'completed');
+  expect(snap.session.goalStatus).toBe('complete');
+  expect(snap.events.some(e=>e.type==='message'&&e.data.text.startsWith('Repeated review cycles made no file progress'))).toBe(true);
+  expect(mockCalls.filter(c=>c.opts.cwd===s.workspacePath&&c.step==='plan').length).toBeGreaterThanOrEqual(2);
+  expect(snap.events.filter(e=>e.type==='message'&&e.actor==='user')).toHaveLength(1);
+});
+
+it('handles an answer arriving while the input question is still finishing its turn',async()=>{
+  const s=await goal('goal-blocked');let answered:Promise<unknown>|undefined;
+  const off=srv.manager.events.subscribe(s.id,e=>{
+    if(e.type==='message'&&e.data.text.startsWith('Goal needs your input:')) {
+      scenarios.set(s.id,'default');answered=srv.manager.sendMessage(s.id,{text:'Use the existing local target.'});
+    }
+  });
+  try {await api.send(s.id,'Build hello');const snap=await status(s.id,'completed');await answered;
+    expect(snap.session.goalStatus).toBe('complete');
+    expect(snap.events.some(e=>e.type==='message'&&e.data.text==='Answer received. Continuing the goal automatically.')).toBe(true);
+  } finally {off();}
+});
+it('honors an explicit pause even when an answer arrives in the same input-question boundary',async()=>{
+  const s=await goal('goal-blocked');let answered:Promise<unknown>|undefined;
+  const off=srv.manager.events.subscribe(s.id,e=>{
+    if(e.type==='message'&&e.data.text.startsWith('Goal needs your input:')) {
+      scenarios.set(s.id,'default');void srv.manager.control(s.id,'pause');answered=srv.manager.sendMessage(s.id,{text:'Use the local target.'});
+    }
+  });
+  try {await api.send(s.id,'Build hello');const snap=await status(s.id,'paused');await answered;
+    expect(snap.session.retryAt).toBeNull();expect(srv.manager.db.getSessionState<any>(s.id)!.automaticDisabled).toBe(true);
+  } finally {off();}
 });

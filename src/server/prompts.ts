@@ -117,6 +117,7 @@ export interface TaskContext {
   plan?: string;
   /** Agent that drafted the plan (when it is not the one being prompted, the plan is always included). */
   planBy?: string;
+  recovery?: string;
   /** Agent being prompted. */
   self?: string;
   critique?: string;
@@ -142,6 +143,7 @@ export function planPrompt(ctx: TaskContext): string {
   return join([
     marker('plan', 0),
     taskBlock(ctx),
+    ctx.recovery,
     ownerBlock(ctx.owner),
     'Step: PLAN (read-only). Inspect the relevant code, then reply with a concise implementation plan: at most ~12 bullets covering files to touch, approach, risks/edge cases and how you will test it. Do not edit files yet.',
   ]);
