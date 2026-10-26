@@ -1,7 +1,7 @@
 // LINA shared domain model. This file is the contract between the daemon,
 // the terminal UI and the web UI. Keep it dependency-free (runs in Node and browser).
 
-export const LINA_VERSION = '0.1.8';
+export const LINA_VERSION = '0.1.9';
 
 export type AgentId = 'codex' | 'claude';
 export const AGENT_IDS: AgentId[] = ['codex', 'claude'];
@@ -179,7 +179,11 @@ export interface RateLimitInfo {
   observedAt: number;
 }
 
+export interface GoalDeferredIssue { key: string; reason: string; retryAt: number; attempts: number; kind?: 'evidence' | 'owner'; active?: boolean }
+
 export interface Session {
+  goalTask?: string;
+  goalDeferred?: GoalDeferredIssue[];
   /** Owner requested continuation while another goal owns this project. */
   goalResumeQueued?: boolean;
   goalStatus?: 'working' | 'complete' | 'blocked' | 'waiting-review';

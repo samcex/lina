@@ -215,12 +215,17 @@ Completed goals display an independently verified completion status; remaining w
 and pending independent reviews continue automatically without another message.
 Explicit Pause/Cancel, project constraints and isolated-workspace approvals still apply.
 Goals sharing a project queue durably and continue when it becomes available.
-Before pausing for input, LINA checks a proposed blocker against the approved plan.
-Routine diagnostics and bounded local repro attempts continue automatically. If
-local investigation is exhausted and future evidence is needed, the goal schedules
-an automatic recheck with a 15–60 minute backoff; Pause/Cancel stop that timer.
-Only a specific fact, credential, scope decision or constraint override requiring
-the owner pauses for input. The server rejects control words such as `resume` as
+Before pausing or waiting, LINA checks the full approved backlog against current files.
+A task needing future evidence or an owner fact stays in a durable deferred queue
+while another verified, unfinished item within the same goal is planned, implemented,
+tested and reviewed. `/goal` shows the current item and deferred issue keys.
+Deferred issues must be retained or explicitly resolved with evidence; they cannot
+be silently dropped or skipped when declaring completion. The full objective and
+selected item remain in agent context across turns and restarts.
+Only when no approved unblocked work remains does the whole goal wait. Future
+evidence schedules a 15–60 minute recheck; a genuinely missing owner fact pauses
+for input. Pause/Cancel stop automatic work. Editing a started goal refreshes its
+task and plan on resume while preserving existing work, findings and deferred issues. The server rejects control words such as `resume` as
 new objectives, including requests from older terminal versions.
 
 ## REA tools

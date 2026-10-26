@@ -384,6 +384,8 @@ export class SessionManager {
       const project = this.getProject(r.session.projectId);
       if ('mock' in body.config && !!body.config.mock !== !!r.session.config.mock) throw new LinaError('mock cannot be changed after creation', 'invalid');
       const next = this.resolveConfig(project, body.config, r.session.config);
+      const goalChanged = next.goal !== r.session.config.goal;
+      if (r.busy && goalChanged) throw new LinaError('Pause at a turn boundary before changing the goal objective', 'busy', 409);
       if (r.busy && (next.mode !== r.session.config.mode || next.developer !== r.session.config.developer || next.reviewer !== r.session.config.reviewer || JSON.stringify(next.team) !== JSON.stringify(r.session.config.team))) {
         throw new LinaError('Wait for the current turn to finish before changing agent roles or team mode', 'busy', 409);
       }
@@ -396,7 +398,9 @@ export class SessionManager {
       if (next.mode !== cur && (duo(next.mode) || duo(cur)) && r.state.task) {
         throw new LinaError(`Cannot switch a started session ${duo(cur) ? 'out of' : 'to'} ${duo(cur) ? cur : next.mode} mode`, 'bad_state', 409, 'Start a new session for that mode.');
       }
+      const previousGoal = r.session.config.goal;
       r.session.config = next;
+      if (goalChanged) r.reframeGoal(previousGoal);
     }
     if (body?.title !== undefined) r.session.title = body.title.trim().slice(0, 200);
     r.persist();
