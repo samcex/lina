@@ -24,4 +24,13 @@ describe('automatic reset wait status',()=>{
    expect(text).toContain('Waiting for usage reset');expect(text).toContain('automatic retry');expect(text).toContain('/pause stops retry');
   }finally{store.dispose();}
  });
+ it('shows automatic continuation for a goal waiting on evidence',()=>{
+  const snap=snapshot();snap.session={...snap.session,status:'interrupted',phase:'interrupted',config:{...snap.session.config,goal:'Investigate packaging'},goalStatus:'working',retryAt:Date.now()+900000};
+  const store=new TuiStore({} as ClientLike,{project,view:viewFromSnapshot(snap),live:false});
+  try{
+   const text=stripAnsi(renderToString(<App store={store} cwd="/tmp" onQuit={()=>{}} size={{columns:140,rows:30}}/>,{columns:140}));
+   expect(text).toContain('Goal will retry automatically');expect(text).toContain('/pause stops retry');
+   expect(text).not.toContain('Interrupted — /resume');
+  }finally{store.dispose();}
+ });
 });

@@ -215,6 +215,13 @@ Completed goals display an independently verified completion status; remaining w
 and pending independent reviews continue automatically without another message.
 Explicit Pause/Cancel, project constraints and isolated-workspace approvals still apply.
 Goals sharing a project queue durably and continue when it becomes available.
+Before pausing for input, LINA checks a proposed blocker against the approved plan.
+Routine diagnostics and bounded local repro attempts continue automatically. If
+local investigation is exhausted and future evidence is needed, the goal schedules
+an automatic recheck with a 15–60 minute backoff; Pause/Cancel stop that timer.
+Only a specific fact, credential, scope decision or constraint override requiring
+the owner pauses for input. The server rejects control words such as `resume` as
+new objectives, including requests from older terminal versions.
 
 ## REA tools
 

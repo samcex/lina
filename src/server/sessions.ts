@@ -85,7 +85,7 @@ export class SessionManager {
     this.automaticEnabled = true;
     for (const session of this.db.listSessions()) {
       const state = this.db.getSessionState<RunnerState>(session.id);
-      if (state?.limitRetryPending || state?.deferredReview || (state?.providerLimits && ['failed','completed'].includes(session.status)) || (state?.selfReviewed && state.lastWriters?.main && session.status === 'completed')) this.runner(session.id);
+      if (state?.goalRetryAt || state?.goalResumePending || state?.limitRetryPending || state?.deferredReview || (state?.providerLimits && ['failed','completed'].includes(session.status)) || (state?.selfReviewed && state.lastWriters?.main && session.status === 'completed')) this.runner(session.id);
     }
     this.armAutomatic();
   }
@@ -319,6 +319,7 @@ export class SessionManager {
     const goal = c.goal ?? base?.goal;
     if (goal !== undefined) {
       if (typeof goal !== 'string' || !goal.trim() || goal.length > 20000) throw new LinaError('goal must be non-empty text (maximum 20000 characters)', 'invalid');
+      if (c.goal !== undefined && /^(?:resume|pause|cancel|status)$/i.test(goal.trim())) throw new LinaError(`"${goal.trim()}" controls a saved goal; it is not a new objective. Use /${goal.trim().toLowerCase() === 'status' ? 'goal' : goal.trim().toLowerCase()} in the terminal. Reopen with lina attach if an older terminal still creates goals for control commands.`, 'invalid');
       if (interactionMode !== 'workflow') throw new LinaError('Goals require structured workflow mode', 'invalid');
       if (!['pair', 'architect'].includes(mode)) throw new LinaError('Goals require pair or architect mode', 'invalid');
       cfg.goal = goal.trim();

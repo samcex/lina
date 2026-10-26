@@ -1,4 +1,4 @@
-import { writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterAll, beforeAll, expect, it } from 'vitest';
 import { setupEnv, makeRepo, waitUntil } from './helpers.js';
@@ -11,9 +11,18 @@ const scenarios = new Map<string, string>();
 const holds = new Map<string, Record<string, number>>();
 setAdapterOverride((agent, ctx) => ({ id: agent, async runTurn(opts, emit) {
   const scenario = scenarios.get(ctx.sessionId!);
+  const marker = /lina:step=(\w+) round=(\d+)/.exec(opts.prompt);
+  if (scenario === 'goal-repro-blocked' && marker?.[1] === 'implement' && opts.prompt.includes('Run three bounded local reproduction attempts')) writeFileSync(join(opts.cwd, 'repro-evidence.txt'), 'Three bounded local attempts executed in this fixture.\n');
   if (scenario === 'goal-test-fix' && opts.prompt.includes('Fix the failing verification')) writeFileSync(join(opts.cwd,'hello.js'), 'exports.hello = name => { if (typeof name !== "string" || !name.trim()) throw new TypeError("name required"); return `Hello, ${name.trim()}!`; };\n');
   const result = await new MockAdapter(agent, { delayMs: 0, scenario, holdMs: holds.get(ctx.sessionId!) }).runTurn(opts, emit);
-  const marker = /lina:step=(\w+) round=(\d+)/.exec(opts.prompt);
+  if (marker?.[1] === 'goal_check' && ['goal-repro-blocked','goal-wait','goal-blocker-malformed'].includes(scenario!) && (scenario !== 'goal-repro-blocked' || marker[2] === '0')) {
+    return { ...result, text: 'LINA_GOAL_BLOCKED: The packaging failure cannot be fixed until it happens again and logging captures its stack trace. The owner needs to say whether to run the bounded repro attempts now or name a different task.' };
+  }
+  if (['goal_blocker_check','goal_blocker_repair'].includes(marker?.[1] ?? '')) {
+    if (scenario === 'goal-repro-blocked') return { ...result, text: 'LINA_GOAL_ACTION: Run three bounded local reproduction attempts, preserve logs, and fix only an evidenced defect.' };
+    if (scenario === 'goal-wait') return { ...result, text: 'LINA_GOAL_WAIT: Local reproduction attempts are exhausted; recheck retained logs for new evidence before further bounded investigation.' };
+    if (scenario === 'goal-blocker-malformed') return { ...result, text: 'Perhaps ask the owner.' };
+  }
   if (marker?.[1] === 'review' && scenario === 'goal-test-fix') return { ...result, text: '```lina-review\n'+JSON.stringify({verdict:'approve',summary:'Reviewed',findings:[],resolved:[],withdrawn:[]})+'\n```' };
   if (marker?.[1] === 'review' && marker[2] === '1' && ['minor-only','nit-only'].includes(scenario!)) {
     return { ...result, text: '```lina-review\n'+JSON.stringify({verdict:'request_changes',summary:'Small fix remains',findings:[{severity:scenario==='minor-only'?'minor':'nit',title:'Polish the compact warning',detail:'Keep it concise.'}],resolved:[],withdrawn:[]})+'\n```' };
@@ -84,11 +93,49 @@ it.each(['goal-blocked'])('pauses %s for owner input and resumes only on request
   const s = await goal(scenario);
   await api.send(s.id, 'Build hello');
   expect((await status(s.id, 'paused')).session.goalStatus).toBe('blocked');
+  expect(mockCalls.some(c=>c.opts.cwd===s.workspacePath&&c.step==='goal_blocker_check')).toBe(true);
   await srv.close(); await boot();
   expect((await api.session(s.id)).session.status).toBe('paused');
   scenarios.set(s.id, 'default');
-  await api.control(s.id, 'resume');
+  expect((await api.control(s.id, 'resume')).goalStatus).toBe('working');
   expect((await status(s.id, 'completed')).session.goalStatus).toBe('complete');
+});
+it('runs bounded repro work automatically when the reviewer incorrectly asks for permission', async () => {
+  const s = await goal('goal-repro-blocked');
+  await api.send(s.id, 'Investigate and fix the local packaging failure autonomously.');
+  const snap = await status(s.id, 'completed');
+  expect(snap.session.goalStatus).toBe('complete');
+  expect(readFileSync(join(s.workspacePath, 'repro-evidence.txt'), 'utf8')).toContain('Three bounded local attempts');
+  expect(mockCalls.some(c=>c.opts.cwd===s.workspacePath&&c.step==='implement'&&c.prompt.includes('Run three bounded local reproduction attempts'))).toBe(true);
+  expect(snap.events.filter(e=>e.type==='message'&&e.actor==='user')).toHaveLength(1);
+  expect(snap.events.some(e=>e.type==='message'&&e.data.text.startsWith('Goal needs your input'))).toBe(false);
+});
+it('waits automatically for new evidence and restores its timer without any client opening the goal', async () => {
+  const s=await goal('goal-wait');await api.send(s.id,'Investigate the packaging failure');
+  const snap=await status(s.id,'interrupted');
+  expect(snap.session.goalStatus).toBe('working');
+  expect(snap.session.retryAt).toBeGreaterThan(Date.now()+14*60_000);
+  const state=srv.manager.db.getSessionState<any>(s.id)!;state.goalRetryAt=Date.now()+200;
+  srv.manager.db.updateSession(snap.session,state);await srv.close();scenarios.set(s.id,'default');await boot();
+  // Reading the DB rather than the API ensures no snapshot can lazily arm the timer.
+  await waitUntil(()=>srv.manager.db.getSession(s.id)?.status==='completed',20_000);
+  expect((await api.session(s.id)).session.goalStatus).toBe('complete');
+});
+it('backs off evidence waits and respects explicit pause across restart', async () => {
+  const s=await goal('goal-wait');await api.send(s.id,'Investigate the packaging failure');await status(s.id,'interrupted');
+  await api.control(s.id,'resume');
+  await waitUntil(()=>srv.manager.db.getSessionState<any>(s.id)?.goalWaitAttempts===2,20_000);
+  const snap=await status(s.id,'interrupted');expect(snap.session.retryAt).toBeGreaterThan(Date.now()+29*60_000);
+  await api.control(s.id,'pause');await srv.close();await boot();
+  const paused=await api.session(s.id);expect(paused.session.status).toBe('paused');expect(paused.session.retryAt).toBeNull();
+});
+it('repairs an invalid blocker decision automatically instead of treating it as owner input', async () => {
+  const s=await goal('goal-blocker-malformed');await api.send(s.id,'Investigate the packaging failure');
+  const snap=await status(s.id,'failed');expect(snap.session.retryAt).toBeGreaterThan(Date.now());
+  expect(snap.session.goalStatus).toBe('working');
+  expect(mockCalls.some(c=>c.opts.cwd===s.workspacePath&&c.step==='goal_blocker_repair')).toBe(true);
+  expect(snap.events.some(e=>e.type==='message'&&e.data.text.startsWith('Goal needs your input'))).toBe(false);
+  await api.control(s.id,'cancel');
 });
 it('recovers an active goal after restart without a manual resume', async () => {
   const s = await goal();
@@ -183,4 +230,7 @@ it('validates goal settings instead of silently ignoring them', async () => {
   await expect(api.createSession({ projectId: project.id, config: { goal: '   ', interactionMode: 'workflow' } })).rejects.toThrow();
   await expect(api.createSession({ projectId: project.id, config: { goal: 'Build hello', interactionMode: 'chat' } })).rejects.toThrow();
   await expect(api.createSession({ projectId: project.id, config: { goal: 'Build hello', mode: 'solo', interactionMode: 'workflow' } })).rejects.toThrow();
+  for (const word of ['resume','pause','cancel','status']) {
+    await expect(api.createSession({projectId:project.id,config:{goal:word,mode:'architect',interactionMode:'workflow'}})).rejects.toThrow('not a new objective');
+  }
 });
