@@ -35,3 +35,21 @@ it('restores an automatic unexpected-runner recovery after restart without openi
  expect(snap.session.goalStatus).toBe('complete');expect(snap.session.goalRequirements?.every(r=>r.status==='verified')).toBe(true);
  expect(snap.events.filter(e=>e.type==='message'&&e.actor==='user')).toHaveLength(1);
 });
+it('keeps automatic recovery enabled when a scheduled start throws, including across restart',async()=>{
+ const project=await api.addProject({path:makeRepo()});
+ const s=await api.createSession({projectId:project.id,config:{mock:true,mode:'architect',interactionMode:'workflow',goal:'Build hello'}});
+ await api.send(s.id,'Build hello');
+ await waitUntil(()=>srv.manager.db.getSession(s.id)?.status==='failed',15000);
+ const state=srv.manager.db.getSessionState<any>(s.id)!;
+ state.goalRetryAt=Date.now()+500;
+ srv.manager.db.updateSession(srv.manager.db.getSession(s.id)!,state);
+ await srv.close();await start();
+ const runner=(srv.manager as any).runner(s.id);
+ const attempt=vi.spyOn(runner,'startAutomatic').mockImplementationOnce(()=>{throw new Error('Temporary availability check failure');});
+ await waitUntil(async()=>(await api.session(s.id)).events.some((e:any)=>e.type==='message'&&e.data.text?.includes('Retrying in 30 seconds')),5000);
+ expect(srv.manager.db.getSessionState<any>(s.id)!.automaticDisabled).not.toBe(true);
+ attempt.mockRestore();
+ await waitUntil(()=>srv.manager.db.getSession(s.id)?.status==='completed',40000);
+ await srv.close();await start();
+ expect((await api.session(s.id)).session.goalStatus).toBe('complete');
+},45000);

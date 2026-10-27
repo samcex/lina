@@ -117,7 +117,12 @@ export class SessionManager {
         try { runner.startAutomatic(now); this.automaticDeferrals.delete(runner.id); }
         catch (error) {
           if (error instanceof LinaError && error.code === 'busy') this.automaticDeferrals.set(runner.id, now + 5000);
-          else runner.suspendAutomatic((error as Error).message);
+          else if (error instanceof LinaError && error.code === 'workspace_missing') runner.suspendAutomatic(error.message);
+          else {
+            // A failed availability check must not become an implicit owner pause.
+            this.automaticDeferrals.set(runner.id, now + 30_000);
+            this.events.append(runner.id, 'message', 'lina', { id: rid(), kind: 'notice', text: `Automatic continuation could not start: ${(error as Error).message}. Retrying in 30 seconds; no owner response is required.` });
+          }
         }
       }
       this.armAutomatic();
@@ -541,8 +546,12 @@ export class SessionManager {
   async control(id: string, action: string): Promise<Session> {
     const r = this.runner(id);
     switch (action) {
-      case 'pause': r.pause(); break;
-      case 'resume': r.resume(); break;
+      case 'pause':
+        this.events.append(id, 'message', 'lina', { id: rid(), kind: 'notice', text: 'Pause requested through session controls. Automatic retry is disabled until Resume.' });
+        r.pause(); break;
+      case 'resume':
+        this.events.append(id, 'message', 'lina', { id: rid(), kind: 'notice', text: 'Resume requested through session controls. Automatic recovery is enabled.' });
+        r.resume(); break;
       case 'retry': r.resume(); break;
       case 'cancel': await r.cancel(); break;
       case 'review': r.extraReview(); break;

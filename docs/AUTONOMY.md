@@ -90,3 +90,5 @@ partial files, a successful actual test command, and verified requirement eviden
 It closes its own processes and retains a result JSON and log in the output path.
 Provider responses in this fault-injection check are mocks; it does not consume
 real provider quotas or certify a particular external project's feature claims.
+
+Scheduler availability errors retry after 30 seconds without disabling automation. Explicit session Pause still disables automatic retries until Resume; Pause and Resume requests are recorded in conversation history.
