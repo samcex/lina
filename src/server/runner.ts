@@ -1,3 +1,4 @@
+import { which } from './agents/proc.js';
 // Runner: the per-session playbook state machine.
 //  team pipeline (pair / architect / solo / custom, driven by teamOf(config)):
 //    plan → plan_review → implement → test → review (every reviewer, concurrently) → revise → … → verify → approval
@@ -12,7 +13,7 @@ import type {
   AgentId, AgentStatus, ApplyStrategy, Attachment, Candidate, EventDataMap, Finding, FindingStatus, Phase, Project, Role,
   Session, SessionStatus, Settings, TeamConfig, TestRun, TurnChange, UsageTotals, WorkPart, GoalDeferredIssue, GoalRequirement,
 } from '../shared/types.js';
-import { AGENT_IDS, BLOCKING_SEVERITIES, teamOf } from '../shared/types.js';
+import { AGENT_IDS, BLOCKING_SEVERITIES, peerOf, teamOf } from '../shared/types.js';
 import type { AgentStreamEvent, TurnResult } from './agents/types.js';
 import { getAdapter } from './agents/index.js';
 import type { Db } from './db.js';
@@ -211,7 +212,7 @@ const UNRESOLVED: FindingStatus[] = ['open', 'disputed', 'escalated', 'fixed'];
 const ANSWERABLE: FindingStatus[] = ['open', 'fixed', 'disputed'];
 
 function emptyUsage(): UsageTotals { return { inputTokens: 0, outputTokens: 0, cachedInputTokens: 0, costUsd: 0, turns: 0 }; }
-function other(a: AgentId): AgentId { return a === 'codex' ? 'claude' : 'codex'; }
+function other(a: AgentId): AgentId { return peerOf(a); }
 function norm(s: string): string { return s.replace(/\s+/g, ' ').trim(); }
 function fmtK(n: number): string { return n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n); }
 function sameId(a: string, b: string): boolean { return a.toLowerCase() === b.toLowerCase(); }
@@ -235,6 +236,8 @@ export class SessionRunner {
   private verificationTree?: string;
 
   constructor(public session: Session, public state: RunnerState, private deps: RunnerDeps) {
+    // Older saved conversations predate the Freebuff model entry.
+    session.config.models = { ...deps.settings().models, ...session.config.models };
     let migratedCapacity = false;
     let migratedReset = false;
     for (const limit of Object.values(state.providerLimits ?? {})) {
@@ -371,17 +374,17 @@ export class SessionRunner {
     this.persist();
   }
 
-  private deferIndependentReview(writer: AgentId): void {
-    const reviewer = other(writer);
+  private deferIndependentReview(writer: AgentId, reviewer: AgentId = other(writer)): void {
     const at = Math.max(Date.now(), this.state.providerLimits?.[reviewer]?.until ?? Date.now() + 300000) + 1000;
     this.state.independentReviewDismissed = false;
     this.state.independentReviewCompleted = false;
     const pending = this.state.deferredReview;
-    const fresh = !pending || (pending.writer !== writer && !pending.next);
+    const same = (job: {writer: AgentId; reviewer: AgentId}) => job.writer === writer && job.reviewer === reviewer;
+    const fresh = !pending || (!same(pending) && !pending.next);
     if (!pending) this.state.deferredReview = { at, base: this.reviewBase, reviewer, writer };
-    else if (pending.writer === writer) pending.at = Math.max(pending.at, at);
-    else if (pending.next) pending.next.at = Math.max(pending.next.at, at);
-    else pending.next = { at, base: this.reviewBase, reviewer, writer };
+    else if (same(pending)) pending.at = Math.max(pending.at, at);
+    else if (pending.next && same(pending.next)) pending.next.at = Math.max(pending.next.at, at);
+    else if (!pending.next) pending.next = { at, base: this.reviewBase, reviewer, writer };
     if (fresh) this.notice(`Independent review of ${writer}'s changes is scheduled when ${reviewer} is available again at ${new Date(at).toISOString()}.`);
   }
 
@@ -985,19 +988,35 @@ export class SessionRunner {
   }
 
   /** parallel: the lead plans and splits the work. Without a usable split the session continues as pair. */
+  /**
+   * Parallel participants that can actually work right now: a three-way split is pointless when one
+   * agent cannot start (Freebuff's free session hours are exhausted), so drop it with a notice first.
+   */
+  private async availableParticipants(): Promise<AgentId[]> {
+    const list = this.participants();
+    if (this.cfg.mock || list.length < 3 || !list.includes('freebuff')) return list;
+    const probe = await import('./agents/freebuff.js').then((m) => m.probeFreebuff({ cwd: this.ws })).catch(() => undefined);
+    if (probe?.ok !== false) return list;
+    const rest = list.filter((a) => a !== 'freebuff');
+    this.notice(`Freebuff was left out of this parallel session: ${probe!.reason ?? 'it is unavailable'}. Continuing with ${rest.join(' + ')}.`);
+    if (rest.length > 2) this.cfg.participants = rest; else delete this.cfg.participants;
+    return rest;
+  }
+
   private async stepSplit(): Promise<void> {
     this.setPhase('planning');
-    const lead = this.cfg.developer;
-    const rival = other(lead);
+    const agents = await this.availableParticipants();
+    const lead = agents[0];
+    const others = agents.filter((a) => a !== lead);
     const owner = this.pendingFor(lead);
-    const r = await this.turn({ agent: lead, role: 'developer', phase: 'planning', access: 'read', prompt: P.splitPlanPrompt({ ...this.ctx(lead, 'developer', owner), lead, other: rival }), deliver: owner });
-    const parsed = parseSplit(r.text);
+    const r = await this.turn({ agent: lead, role: 'developer', phase: 'planning', access: 'read', prompt: P.splitPlanPrompt({ ...this.ctx(lead, 'developer', owner), lead, others }), deliver: owner });
+    const parsed = parseSplit(r.text, agents);
     let parts = parsed.value?.parts;
     let error = parsed.error;
     if (!parts) {
       log.warn(`session ${this.id}: unusable lina-split (${parsed.error}); asking for a repair`);
-      const r2 = await this.turn({ agent: lead, role: 'developer', phase: 'planning', access: 'read', prompt: P.splitRepairPrompt(lead, rival), deliver: [] });
-      const p2 = parseSplit(r2.text);
+      const r2 = await this.turn({ agent: lead, role: 'developer', phase: 'planning', access: 'read', prompt: P.splitRepairPrompt(lead, others), deliver: [] });
+      const p2 = parseSplit(r2.text, agents);
       parts = p2.value?.parts;
       error = p2.error ?? error;
     }
@@ -1011,8 +1030,9 @@ export class SessionRunner {
     if (!parts) {
       this.state.parts = undefined;
       this.cfg.mode = 'pair';
-      this.cfg.reviewer = rival;
-      this.notice(`${lead} did not produce a usable split of the work (${error ?? 'unknown error'}). Continuing as Developer + Reviewer: ${lead} implements the plan, ${rival} reviews.`);
+      this.cfg.reviewer = others[0] ?? this.cfg.reviewer;
+      delete this.cfg.participants;
+      this.notice(`${lead} did not produce a usable split of the work (${error ?? 'unknown error'}). Continuing as Developer + Reviewer: ${lead} implements the plan, ${this.cfg.reviewer} reviews.`);
     }
     this.setStep('implement');
     this.persist();
@@ -1059,7 +1079,7 @@ export class SessionRunner {
   /** Creates the agents' worktrees (or reuses them on a retry). */
   private async ensureVariants(parts?: WorkPart[]): Promise<void> {
     const vs = { ...(this.session.variants ?? {}) };
-    for (const a of AGENT_IDS) {
+    for (const a of this.participants()) {
       const part = parts?.find((p) => p.agent === a);
       const cur = vs[a];
       const v = cur && existsSync(cur.workspacePath) ? cur : await git.createVariant(this.ws, this.id, a, this.session.baseCommit);
@@ -1069,7 +1089,7 @@ export class SessionRunner {
     this.persist();
   }
 
-  /** parallel: both agents build their part at the same time, each in its own worktree. */
+  /** parallel: every participant builds its part at the same time, each in its own worktree. */
   private async stepParts(): Promise<void> {
     this.setPhase('implementing');
     const parts = this.state.parts!;
@@ -1081,8 +1101,7 @@ export class SessionRunner {
       run: async () => {
         const agent = part.agent;
         const owner = this.pendingFor(agent);
-        const otherPart = parts.find((p) => p.agent !== agent)!;
-        const prompt = P.partPrompt({ ...this.ctx(agent, 'developer', owner, agent), part, other: otherPart, lead });
+        const prompt = P.partPrompt({ ...this.ctx(agent, 'developer', owner, agent), part, others: parts, lead });
         const r = await this.turn({ agent, role: 'developer', phase: 'implementing', access: 'write', prompt, deliver: owner, variant: agent });
         this.state.lastTexts = { ...this.state.lastTexts, [agent]: r.text };
         this.agentMessage(agent, 'developer', r, r.text.trim(), 'chat', agent);
@@ -1100,7 +1119,7 @@ export class SessionRunner {
     await this.ensureVariants();
     const req = this.revisionText();
     const atts = this.state.revisionAttachments;
-    await this.concurrently(AGENT_IDS.map((agent) => ({
+    await this.concurrently(this.participants().map((agent) => ({
       key: `implement:${agent}`,
       agent,
       run: async () => {
@@ -1129,7 +1148,7 @@ export class SessionRunner {
     if (await git.mergeInProgress(this.ws)) await git.abortMerge(this.ws); // a resolution that was cancelled or failed
     await this.checkpoint('LINA: before integration');
     let conflicted = false;
-    for (const agent of [lead, other(lead)]) {
+    for (const agent of this.participants()) {
       const v = this.session.variants?.[agent];
       if (!v) continue;
       const m = await git.mergeBranch(this.ws, v.branch, `LINA: integrate ${agent}'s part${v.part ? ` "${truncate(v.part.title, 60)}"` : ''}`);
@@ -1165,7 +1184,7 @@ export class SessionRunner {
   private async stepTest(): Promise<void> {
     this.setPhase('testing');
     if (this.competing) {
-      for (const a of AGENT_IDS) { // one after the other: test suites may bind the same ports
+      for (const a of this.participants()) { // one after the other: test suites may bind the same ports
         const head = await git.headCommit(this.wsOf(a));
         if (this.state.variantTests?.[a]?.commit !== head) await this.runTestsNow(head, a);
       }
@@ -1186,15 +1205,18 @@ export class SessionRunner {
   private async reviewUnits(): Promise<ReviewUnit[]> {
     if (this.state.deferredReviewRunning && this.state.deferredReview) {
       const pending = this.state.deferredReview;
-      if (this.competing) return AGENT_IDS.map((candidate) => ({ candidate, owner: candidate,
+      if (this.competing) return this.participants().map((candidate) => ({ candidate, owner: candidate,
         reviewer: other(this.state.lastWriters?.[candidate] ?? pending.writer), judges: (f: Finding) => f.variant === candidate }));
-      if (this.split) return this.split.map((focus) => ({ focus, owner: focus.agent,
-        reviewer: other(this.state.lastWriters?.[focus.agent] ?? pending.writer), judges: (f: Finding) => (f.owner ?? this.cfg.developer) === focus.agent }));
+      if (this.split) {
+        const parts = this.split;
+        return parts.map((focus, i) => ({ focus, owner: focus.agent,
+          reviewer: parts[(i + 1) % parts.length].agent, judges: (f: Finding) => (f.owner ?? this.cfg.developer) === focus.agent }));
+      }
       return [{ reviewer: this.state.round === this.state.roundBase + 1 ? pending.reviewer : other(this.state.lastWriters?.main ?? pending.writer), judges: () => true }];
     }
     if (this.competing) {
       const out: ReviewUnit[] = [];
-      for (const c of AGENT_IDS) {
+      for (const c of this.participants()) {
         const head = await git.headCommit(this.wsOf(c));
         const pending = this.state.findings.some((f) => f.variant === c && ANSWERABLE.includes(f.status));
         if (head === this.state.reviewedHead?.[c] && !pending) continue; // unchanged and nothing to judge
@@ -1204,7 +1226,11 @@ export class SessionRunner {
     }
     const parts = this.split;
     if (parts) {
-      return AGENT_IDS.map((r) => ({ reviewer: r, focus: parts.find((p) => p.agent === other(r)), owner: other(r), judges: (f: Finding) => (f.reviewerSlot ?? f.raisedBy) === r }));
+      // Each part is cross-reviewed by the next participant in the split (2 agents: each reviews the other).
+      return parts.map((focus, i) => {
+        const reviewer = parts[(i + 1) % parts.length].agent;
+        return { reviewer, focus, owner: focus.agent, judges: (f: Finding) => (f.reviewerSlot ?? f.raisedBy) === reviewer };
+      });
     }
     const t = this.team;
     const reviewers = t.reviewers.length ? t.reviewers : [this.cfg.reviewer];
@@ -1219,7 +1245,7 @@ export class SessionRunner {
     if (!this.state.done.length) { this.state.lastReviewers = []; this.state.selfReviewed = false; if (this.state.deferredReviewRunning) this.state.deferredReviewPasses = 0; }
     await this.concurrently(units.map((u) => ({ key: `review:${u.reviewer}${this.state.deferredReviewRunning ? ':' + (u.candidate ?? u.focus?.agent ?? 'main') : ''}`, agent: u.reviewer, run: () => this.reviewOne(u, round) })));
     // Stalemate detection runs once per round, on the whole blocking set (per candidate in compete).
-    const escalated = this.competing ? AGENT_IDS.flatMap((c) => this.stalemate((f) => f.variant === c, c)) : this.stalemate(() => true);
+    const escalated = this.competing ? this.participants().flatMap((c) => this.stalemate((f) => f.variant === c, c)) : this.stalemate(() => true);
     if (escalated.length) {
       this.append('findings', 'lina', { findings: this.state.findings });
       this.notice(`${this.cfg.goal ? 'Goal will reassess unresolved findings' : 'Escalated to you'}: ${escalated.map((f) => `${f.id} (${f.title})`).join(', ')} — the agents could not agree.`);
@@ -1379,12 +1405,12 @@ export class SessionRunner {
     const round = this.state.round;
     this.setPhase('revising');
     if (this.competing) {
-      const cands = AGENT_IDS.filter((c) => this.blocking((f) => f.variant === c).length);
+      const cands = this.participants().filter((c) => this.blocking((f) => f.variant === c).length);
       await this.concurrently(cands.map((c) => ({ key: `revise:${c}`, agent: c, run: () => this.reviseOne(c, round, (f) => f.variant === c, c) })));
     } else if (this.split) {
       const lead = this.cfg.developer;
       const ownerOf = (f: Finding) => f.owner ?? lead;
-      const devs = [lead, other(lead)].filter((a) => this.state.findings.some((f) => f.status === 'open' && ownerOf(f) === a));
+      const devs = this.participants().filter((a) => this.state.findings.some((f) => f.status === 'open' && ownerOf(f) === a));
       await this.sequentially(devs.map((a) => ({ key: `revise:${a}`, agent: a, run: () => this.reviseOne(a, round, (f) => ownerOf(f) === a) })));
     } else {
       await this.reviseOne(this.team.developer, round, () => true);
@@ -1502,7 +1528,7 @@ export class SessionRunner {
     this.state.goalProtocolAttempts = 0;
     this.state.goalWaitAttempts = 0;
     this.state.goalCurrentTask = undefined;
-    if (actual === writer || actual === this.state.lastWriters?.main) {
+    if (actual === writer || actual === this.state.lastWriters?.main || (this.team.reviewers.length > 1 && this.state.deferredReview)) {
       this.state.goalStatus = 'waiting-review';
       this.notice('Goal completion awaits the independent reviewer when that provider is available again.');
     } else {
@@ -1622,7 +1648,7 @@ export class SessionRunner {
     }
     this.state.goalRecheckPending = false;
     const writer = this.state.lastWriters?.main ?? this.team.developer;
-    const reviewer = AGENT_IDS.find((agent) => agent !== writer)!;
+    const reviewer = this.team.reviewers.find((agent) => agent !== writer) ?? peerOf(writer);
     this.notice('Checking whether the full goal is complete.');
     let r = await this.turn({ agent: reviewer, role: 'reviewer', phase: 'verifying', access: 'read', reviewWriter: writer, deliver: [],
       prompt: `<!-- lina:step=goal_check round=${this.state.goalCycles ?? 0} -->
@@ -1713,7 +1739,7 @@ Use LINA_GOAL_COMPLETE, LINA_GOAL_CONTINUE: <remaining in-scope work>, or LINA_G
       if (role === 'developer') await this.checkpoint('LINA: owner follow-up', wt);
     }
     if (this.state.deferredReviewRunning) {
-      const expected = this.competing ? AGENT_IDS.length : this.split?.length ?? 1;
+      const expected = this.competing ? this.participants().length : this.split?.length ?? 1;
       if (!this.state.unparsedReview && (this.state.deferredReviewPasses ?? 0) >= expected && !this.state.selfReviewed) {
         this.state.deferredReview = this.state.deferredReview?.next;
         this.state.independentReviewCompleted = !this.state.deferredReview;
@@ -1757,7 +1783,7 @@ Use LINA_GOAL_COMPLETE, LINA_GOAL_CONTINUE: <remaining in-scope work>, or LINA_G
   }
 
   private async verifyCompete(): Promise<void> {
-    for (const a of AGENT_IDS) {
+    for (const a of this.participants()) {
       await this.checkpoint('LINA: final changes', a);
       const head = await git.headCommit(this.wsOf(a));
       if (this.state.variantTests?.[a]?.commit !== head) await this.runTestsNow(head, a);
@@ -1773,7 +1799,7 @@ Use LINA_GOAL_COMPLETE, LINA_GOAL_CONTINUE: <remaining in-scope work>, or LINA_G
 
   private async candidates(): Promise<Candidate[]> {
     const out: Candidate[] = [];
-    for (const a of AGENT_IDS) {
+    for (const a of this.participants()) {
       const ws = this.wsOf(a);
       const head = await git.headCommit(ws);
       let files: git.FileStat[] = [];
@@ -1884,7 +1910,14 @@ Use LINA_GOAL_COMPLETE, LINA_GOAL_CONTINUE: <remaining in-scope work>, or LINA_G
   private async turn(spec: TurnSpec): Promise<{ text: string; result: TurnResult; msgId: string; model: string; change?: TurnChange; agent: AgentId }> {
     let continuation = '';
     const independentOnly = this.state.deferredReviewRunning && spec.role === 'reviewer';
-    for (const agent of independentOnly ? [spec.agent] : [spec.agent, other(spec.agent)]) {
+    const fallback = [spec.agent, ...AGENT_IDS.filter(a => a !== spec.agent)];
+    const hasFreebuff = (this.cfg.mock || this.session.mock)
+      ? [this.team.developer, this.team.planner, this.team.planCritic, ...this.team.reviewers, ...(this.cfg.participants ?? [])].includes('freebuff')
+      : !!await which(process.env.LINA_FREEBUFF_BIN || 'freebuff');
+    const available = hasFreebuff ? fallback : fallback.filter(a => a !== 'freebuff' || a === spec.agent);
+    // A returning independent reviewer must remain independent; never substitute the author.
+    const candidates = independentOnly ? [spec.agent] : available;
+    for (const agent of candidates) {
       if ((this.state.providerLimits?.[agent]?.until ?? 0) > Date.now()) continue;
       const takeover = agent !== spec.agent;
       if (takeover && !this.state.automaticDisabled && !this.cancelRequested) this.state.limitRetryPending = true;
@@ -1900,21 +1933,24 @@ Use LINA_GOAL_COMPLETE, LINA_GOAL_CONTINUE: <remaining in-scope work>, or LINA_G
         if (error.kind==='usage' && error.resetAt && error.resetAt > Date.now()) resets.push(error.resetAt);
         this.state.providerLimits ??= {};
         this.state.providerLimits[agent] = { until: resets.length ? Math.max(...resets) : Date.now() + (error.kind==='configuration' ? 5*60_000 : error.kind!=='usage' || recentReset ? Math.min(120,15*2**Math.min(this.state.limitRetryAttempts??0,3))*1000 : Math.min(60, 5 * 2 ** Math.min(this.state.limitRetryAttempts ?? 0, 4)) * 60_000), message: error.message, kind:error.kind, resetAt:error.resetAt };
+        const writer = this.state.lastWriters?.[spec.variant ?? 'main'];
+        if (spec.phase === 'reviewing' && writer && spec.agent !== writer) this.deferIndependentReview(writer, spec.agent);
         continuation = `Previous provider's partial reply: ${error.partial ?? ''}\nFiles already changed: ${error.files?.join(', ') ?? '(inspect the current workspace)'}`;
         this.agentStatus(agent, 'error', error.message, spec.role);
         this.persist();
       }
     }
     const grace = Math.min(60_000, 1000 * 2 ** Math.min(this.state.limitRetryAttempts ?? 0, 6));
-    const retryAt = (independentOnly ? this.state.providerLimits?.[spec.agent]?.until ?? Date.now() + 300000 : Math.min(...Object.values(this.state.providerLimits ?? {}).map((limit) => limit?.until ?? Infinity))) + grace;
+    const retryAt = Math.min(...candidates.map(a => this.state.providerLimits?.[a]?.until ?? Date.now() + 300000)) + grace;
     this.state.limitRetryAt = Number.isFinite(retryAt) ? Math.max(Date.now() + 1000, retryAt) : Date.now() + 300000;
     this.state.limitRetryPending = true;
     this.state.limitRetryAttempts = (this.state.limitRetryAttempts ?? 0) + 1;
-    const waitingAgents = independentOnly ? [spec.agent] : AGENT_IDS;
+    // Include the configured reviewer: solo sessions have no reviewing participant, but its limit is still relevant.
+    const waitingAgents = candidates;
     const capacity = waitingAgents.some(a=>this.state.providerLimits?.[a]?.kind==='capacity' && this.state.providerLimits[a]!.until>Date.now());
     const recovering = waitingAgents.some(a=>this.state.providerLimits?.[a]?.kind==='recovery' && this.state.providerLimits[a]!.until>Date.now());
     const configuration = waitingAgents.some(a=>this.state.providerLimits?.[a]?.kind==='configuration' && this.state.providerLimits[a]!.until>Date.now());
-    const why = capacity || recovering || configuration ? waitingAgents.map(a=>`${a}: ${this.state.providerLimits?.[a]?.kind==='capacity'?'model at capacity':this.state.providerLimits?.[a]?.kind==='recovery'?'temporary failure':this.state.providerLimits?.[a]?.kind==='configuration'?'provider setup needs attention':'usage limit'}`).join('; ') : independentOnly ? 'The independent reviewer is still limited' : 'Both providers are limited';
+    const why = capacity || recovering || configuration ? waitingAgents.map(a=>`${a}: ${this.state.providerLimits?.[a]?.kind==='capacity'?'model at capacity':this.state.providerLimits?.[a]?.kind==='recovery'?'temporary failure':this.state.providerLimits?.[a]?.kind==='configuration'?'provider setup needs attention':'usage limit'}`).join('; ') : independentOnly ? 'The independent reviewer is still limited' : `${candidates.length === 2 ? 'Both providers' : 'All configured providers'} are limited`;
     this.append('error', 'lina', { code: capacity?'capacity':recovering?'transient':configuration?'internal':'rate_limited', message: `${why}. Work is preserved; automatic retry at ${new Date(this.state.limitRetryAt).toISOString()}.`, hint: 'LINA resumes automatically when a provider is available. Pause or Cancel stops automatic retry.' });
     this.persist();
     throw new Halt('error');
@@ -1929,7 +1965,7 @@ Use LINA_GOAL_COMPLETE, LINA_GOAL_CONTINUE: <remaining in-scope work>, or LINA_G
     const selfReview = role === 'reviewer' && (spec.reviewWriter ?? this.state.lastWriters?.[variant ?? 'main']) === agent && (agent !== this.team.developer || Object.values(this.state.providerLimits ?? {}).some((limit) => limit && limit.until > Date.now()));
     if (selfReview) {
       this.state.selfReviewed = true;
-      this.deferIndependentReview(agent);
+      this.deferIndependentReview(agent, spec.requestedAgent && spec.requestedAgent !== agent ? spec.requestedAgent : other(agent));
       this.notice(`${agent} is checking its own work because the other provider is limited; this is not an independent review.`);
       spec = { ...spec, prompt: 'This is a self-review after provider takeover. Be critical and explicit that no independent reviewer is available.\n\n' + spec.prompt };
     }
@@ -2029,6 +2065,7 @@ Use LINA_GOAL_COMPLETE, LINA_GOAL_CONTINUE: <remaining in-scope work>, or LINA_G
         result = await adapter.runTurn({
           sessionId: this.id,
           reaEnabled: settings.reaEnabled,
+          ...(this.cfg.mode === 'parallel' ? { participants: this.participants() } : {}),
           prompt: [spec.prompt, this.state.goalRecoveryContext, P.conversationContext(cwd, this.deps.db.recentConversation(this.id, agent)
             .filter((message) => !this.competing || phase !== 'implementing' || message.agent === 'user' || message.agent === agent)), this.state.undoNotice].filter(Boolean).join('\n\n'),
           cwd,
@@ -2123,7 +2160,7 @@ Use LINA_GOAL_COMPLETE, LINA_GOAL_CONTINUE: <remaining in-scope work>, or LINA_G
     this.pruneQueue();
     this.persist();
     if (role === 'developer') this.state.lastDeveloperAgent = agent;
-    if (wrote && spec.requestedAgent && spec.requestedAgent !== agent && this.team.reviewers.length) this.deferIndependentReview(agent);
+    if (wrote && spec.requestedAgent && spec.requestedAgent !== agent && this.team.reviewers.length) this.deferIndependentReview(agent, spec.requestedAgent && spec.requestedAgent !== agent ? spec.requestedAgent : other(agent));
     this.persist();
     this.state.goalRecoveryAttempts = 0;
     this.state.goalRecoveryContext = undefined;
@@ -2237,13 +2274,13 @@ Use LINA_GOAL_COMPLETE, LINA_GOAL_CONTINUE: <remaining in-scope work>, or LINA_G
     const parts = this.split;
     if (parts) lines.push(`\n**Parts:** ${parts.map((p) => `${p.agent} — ${p.title}`).join(' · ')} (${this.cfg.developer} led and integrated)`);
     lines.push(`\n**Tests:** ${testFact(st.lastTest)}`);
-    const reviewers = st.lastReviewers ?? (parts ? [...AGENT_IDS] : this.team.reviewers);
+    const reviewers = st.lastReviewers ?? (parts ? [...this.participants()] : this.team.reviewers);
     const reviewed = this.hasReview() || st.round > st.roundBase;
     if (reviewed) {
       const rounds = st.round - st.roundBase;
       const verdict = st.unparsedReview ? 'review output unparseable — escalated to you' : st.maxRoundsHit ? `stopped at max rounds (${this.cfg.maxRounds})` : this.blocking().length ? 'changes still requested'
         : st.findings.some((f) => f.status === 'escalated') ? 'disagreement escalated to you' : 'approved';
-      const by = st.selfReviewed ? 'self-review after provider takeover (independent review unavailable)' : parts ? `cross-review by ${AGENT_IDS.filter((agent) => reviewers.includes(agent)).join(' + ')}` : `by ${(reviewers.length ? reviewers : [this.cfg.reviewer]).join(' + ')}`;
+      const by = st.selfReviewed ? 'self-review after provider takeover (independent review unavailable)' : parts ? `cross-review by ${this.participants().filter((agent) => reviewers.includes(agent)).join(' + ')}` : `by ${(reviewers.length ? reviewers : [this.cfg.reviewer]).join(' + ')}`;
       lines.push(`\n**Review:** ${rounds} round(s) ${by} — ${verdict}`);
       lines.push(...this.findingGroups(st.findings));
     }
@@ -2297,7 +2334,7 @@ Use LINA_GOAL_COMPLETE, LINA_GOAL_CONTINUE: <remaining in-scope work>, or LINA_G
     const task = this.state.task ? truncate(this.state.task.trim(), 1500) : '';
     const t = this.team;
     const team = this.session.chosenVariant ? `${this.session.chosenVariant} (version chosen over ${other(this.session.chosenVariant)}'s)`
-      : this.split ? `${AGENT_IDS.join(' + ')} (parallel, ${this.cfg.developer} leading)`
+      : this.split ? `${this.participants().join(' + ')} (parallel, ${this.cfg.developer} leading)`
         : t.reviewers.length ? `${t.developer} (developer) + ${t.reviewers.join(' + ')} (review)` : t.developer;
     return `${title}\n\n${task}\n\nPrepared in LINA session ${this.id} by ${team}.`.replace(/\n{3,}/g, '\n\n');
   }
@@ -2319,7 +2356,11 @@ Use LINA_GOAL_COMPLETE, LINA_GOAL_CONTINUE: <remaining in-scope work>, or LINA_G
   }
 
   private participants(): AgentId[] {
-    if (this.competing || this.cfg.mode === 'parallel') return [this.cfg.developer, other(this.cfg.developer)];
+    if (this.cfg.mode === 'parallel') {
+      const listed = this.cfg.participants?.length ? this.cfg.participants : [this.cfg.developer, this.cfg.reviewer];
+      return [...new Set([this.cfg.developer, ...listed])];
+    }
+    if (this.competing) return [...new Set([this.cfg.developer, this.cfg.reviewer])];
     const t = this.team;
     return [...new Set([t.developer, ...(t.planner ? [t.planner] : []), ...(t.planCritic ? [t.planCritic] : []), ...t.reviewers])];
   }

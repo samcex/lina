@@ -1,7 +1,7 @@
 // Pure transcript renderer: folds a SessionView timeline (+ TUI-local notices)
 // into pre-wrapped ANSI lines. Results are cached per event object and width,
 // so streaming updates only re-render the streaming tail.
-import type { AgentId, AnyLinaEvent, Candidate, Finding, LinaEvent, Mode, Severity, TestRun } from '../shared/types.js';
+import { AGENT_IDS, peerOf, type AgentId, type AnyLinaEvent, type Candidate, type Finding, type LinaEvent, type Mode, type Severity, type TestRun } from '../shared/types.js';
 import type { SessionView } from '../shared/reducer.js';
 import { PHASE_LABEL } from '../shared/reducer.js';
 import { agentDisplayText } from '../shared/agent-display.js';
@@ -113,7 +113,7 @@ function renderMessage(e: LinaEvent<'message'>, width: number, ctx: RenderCtx = 
   const meta = tags.length ? ' ' + dim(tags.join(' · ')) : '';
   const right = dim((d.model ? d.model + '  ' : '') + formatClock(e.ts));
   const out = [headerLine(badge(e.actor) + meta, right, width)];
-  const body = renderMarkdown(e.actor === 'codex' || e.actor === 'claude' ? agentDisplayText(d.text) : d.text, width - 2);
+  const body = renderMarkdown(AGENT_IDS.includes(e.actor as AgentId) ? agentDisplayText(d.text) : d.text, width - 2);
   out.push(...indent(body));
   if (d.attachments?.length) out.push(...indent(d.attachments.map((a) => dim(`📎 ${a.name} (${Math.ceil(a.size / 1024)} KB)`))));
   out.push('');
@@ -214,6 +214,10 @@ function renderSplit(e: LinaEvent<'split'>, width: number): string[] {
       const shown = part.files.slice(0, 8).map((f) => fg(color)(f)).join(dim(', '));
       lines.push(...wrapAnsi(dim('files ') + shown + (part.files.length > 8 ? dim(` +${part.files.length - 8} more`) : ''), inner - 2).map((l) => '  ' + l));
     }
+    if (d.parts.length > 1) {
+      const reviewer = d.parts[(d.parts.indexOf(part) + 1) % d.parts.length].agent;
+      lines.push('  ' + dim('cross-review by ') + fg(actorColor(reviewer))(AGENT_NAME[reviewer]));
+    }
   }
   return [...card(lines, C.lina), ''];
 }
@@ -258,7 +262,7 @@ function candidateTests(t: TestRun | undefined): string {
 
 /** Comparison rows (label + one cell per candidate), all facts measured by LINA. */
 export function candidateRows(cands: Candidate[]): { label: string; cells: string[] }[] {
-  const rival = (c: Candidate): AgentId | undefined => cands.find((x) => x.agent !== c.agent)?.agent ?? (c.agent === 'codex' ? 'claude' : 'codex');
+  const rival = (c: Candidate): AgentId | undefined => cands.find((x) => x.agent !== c.agent)?.agent ?? peerOf(c.agent);
   return [
     { label: 'Tests', cells: cands.map((c) => candidateTests(c.tests)) },
     { label: 'Changes', cells: cands.map((c) => `${c.files} file${c.files === 1 ? '' : 's'} ${fg(C.ok)('+' + c.additions)} ${fg(C.err)('−' + c.deletions)}`) },
@@ -301,7 +305,7 @@ export function candidateComparison(cands: Candidate[], width: number, chosen?: 
   return out;
 }
 
-const agentsHint = (cands: Candidate[]) => (cands.length ? cands.map((c) => c.agent).join('|') : 'codex|claude');
+const agentsHint = (cands: Candidate[]) => (cands.length ? cands.map((c) => c.agent).join('|') : AGENT_IDS.join('|'));
 
 function renderApproval(e: LinaEvent<'approval'>, width: number, ctx: RenderCtx = {}): string[] {
   const d = e.data;
@@ -384,7 +388,7 @@ export function renderNotice(n: LocalNotice, width: number): string[] {
   return [...indent(lines), ''];
 }
 
-export function renderStream(s: { agent: 'codex' | 'claude'; text: string }, width: number, cursorOn: boolean): string[] {
+export function renderStream(s: { agent: AgentId; text: string }, width: number, cursorOn: boolean): string[] {
   const color = actorColor(s.agent);
   const out = [headerLine(badge(s.agent) + ' ' + fg(color)(italic('writing…')), '', width)];
   const text = agentDisplayText(s.text, true);
@@ -408,7 +412,7 @@ function cached<T extends object>(obj: T, width: number, fn: (o: T, w: number, c
 export function welcomeLines(width: number, projectName: string, recent: { id: string; title: string; status: string }[] = []): string[] {
   const out = [
     '',
-    INDENT + bold(fg(C.lina)('◆ LINA')) + dim('  Codex + Claude Code, working as one team'),
+    INDENT + bold(fg(C.lina)('◆ LINA')) + dim(`  ${AGENT_IDS.map((a) => AGENT_NAME[a]).join(' + ')}, working as one team`),
     '',
     ...indent(wrapAnsi(`Describe what you want built in ${bold(projectName)}. The developer implements, LINA runs the tests, the reviewer reviews. New sessions edit your project directly and leave changes uncommitted.`, width - 2)),
     '',

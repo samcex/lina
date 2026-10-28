@@ -1,3 +1,4 @@
+import { DELEGATION_TEAM } from '../../src/shared/types.js';
 import React from 'react';
 import { PassThrough, Writable } from 'node:stream';
 import { describe, expect, it } from 'vitest';
@@ -77,4 +78,15 @@ describe('original appearance with more visible agent work', () => {
       expect(text()).toContain('Fresh draft');expect(text()).not.toContain('Keep this draft');
     } finally {restore();app.unmount();store.dispose();}
   });
+});
+
+it.each([[80,24],[140,40]])('shows all three delegation roles at %i columns', (columns,rows)=>{
+ const snap=snapshot();snap.session.config={...snap.session.config,mode:'custom',developer:'freebuff',reviewer:'codex',team:DELEGATION_TEAM};
+ const store=new TuiStore({sessions:async()=>[]} as unknown as ClientLike,{view:viewFromSnapshot(snap),project,live:false});
+ try{
+  const text=stripAnsi(renderToString(<App store={store} cwd="/tmp" onQuit={()=>{}} size={{columns,rows}} />,{columns}));
+  for(const name of ['Codex','Claude','Freebuff'])expect(text).toContain(name);
+  expect(Math.max(...text.split('\n').map(strWidth))).toBeLessThanOrEqual(columns);
+  expect(text.split('\n').length).toBeLessThanOrEqual(rows);
+ }finally{store.dispose();}
 });

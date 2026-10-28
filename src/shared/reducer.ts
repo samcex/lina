@@ -4,7 +4,7 @@ import type {
   AgentId, AgentStatus, AnyLinaEvent, Finding, LinaEvent, LiveState, Mode, Phase, Project, RateLimitInfo, Role,
   Session, SessionConfig, SessionSnapshot, TestRun,
 } from './types.js';
-import { teamOf } from './types.js';
+import { AGENT_IDS, byAgent, teamOf } from './types.js';
 
 export interface ActivityItem {
   key: string; // agent:id
@@ -55,7 +55,7 @@ export function viewFromSnapshot(snap: SessionSnapshot): SessionView {
     project: snap.project,
     timeline: [],
     lastSeq: 0,
-    agents: { codex: emptyAgent(), claude: emptyAgent() },
+    agents: byAgent(() => emptyAgent()),
     streams: { ...snap.live.streams },
     findings: snap.findings,
     tests: [],
@@ -101,7 +101,7 @@ export function applyEvent(v: SessionView, e: AnyLinaEvent): SessionView {
     }
     case 'activity': {
       const d = e.data;
-      const owner: AgentId = d.agent === 'lina' ? (e.actor === 'codex' || e.actor === 'claude' ? e.actor : 'codex') : d.agent;
+      const owner: AgentId = d.agent === 'lina' ? (AGENT_IDS.includes(e.actor as AgentId) ? (e.actor as AgentId) : AGENT_IDS[0]) : d.agent;
       if (d.agent === 'lina') return v; // LINA's own activity shows in the timeline (tests/git), not agent panels
       const a = v.agents[owner] ?? emptyAgent();
       const key = `${d.agent}:${d.id}`;
@@ -173,7 +173,7 @@ export const MODE_DESCRIPTION: Record<Mode, string> = {
   pair: 'One agent implements, the other reviews; they iterate until the reviewer approves.',
   architect: 'Like Developer + Reviewer, but the reviewer critiques the plan before any code is written.',
   solo: 'One agent implements and LINA verifies the tests. No review.',
-  parallel: 'The lead splits the task; both agents build their part at the same time; LINA merges; each reviews the other\'s part.',
+  parallel: 'The lead splits the task; every agent builds a part at the same time; LINA merges; each cross-reviews another part.',
   compete: 'Both agents build the whole task independently, then review each other\'s version. You pick the winner.',
   custom: 'You choose who plans, who critiques the plan, who implements and who reviews.',
 };

@@ -3,7 +3,7 @@
 // /api/settings or the web UI. The token is part of every Bot API URL, so errors are scrubbed of it.
 import { chmodSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import type { Session } from '../shared/types.js';
+import { AGENT_LABEL, type Session } from '../shared/types.js';
 import { log } from './log.js';
 import { paths } from './paths.js';
 
@@ -72,7 +72,7 @@ export function notificationText(s: Session, project: string | undefined, status
   const where = project ? ` · ${project}` : '';
   const what = status === 'awaiting_approval' ? 'is waiting for your approval.'
     : status === 'failed' ? 'stopped with an error.'
-      : `is done — ${s.config.developer === 'claude' ? 'Claude' : 'Codex'} finished your request.`;
+      : `is done — ${AGENT_LABEL[s.config.developer]} finished your request.`;
   return `LINA${where}\n“${s.title}” ${what}\nOpen it: lina attach ${s.id.slice(0, 8)}`;
 }
 

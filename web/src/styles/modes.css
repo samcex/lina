@@ -57,10 +57,11 @@
 .menu-team { border-top: 1px solid var(--line); margin-top: 4px; padding: 4px 4px 0; }
 .menu-team .team-editor { border: 0; background: none; padding: 4px 6px 8px; }
 
-/* Live panel: two agents at once */
+/* Live panel: several agents at once */
 .live-both { display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-radius: var(--r-full); font-size: var(--fs-xs); font-weight: 600; color: var(--text-2); background: var(--iris-soft); border: 1px solid color-mix(in srgb, var(--iris) 22%, transparent); align-self: flex-start; }
 .live-both i { width: 7px; height: 7px; border-radius: 50%; background: var(--a); box-shadow: 0 0 8px var(--a); animation: blink 1.4s ease-in-out infinite; }
 .live-both i + i { margin-left: -4px; animation-delay: 0.7s; }
+.live-both i:nth-child(3) { animation-delay: 1.4s; }
 .live.is-concurrent .agent-panel { min-height: 220px; }
 .ap-wt { margin-top: 4px; }
 .role-tag.is-idle { color: var(--text-4); background: var(--s-hover); }
@@ -73,6 +74,7 @@
 /* Checkpoint in a worktree */
 .card-checkpoint[data-agent]::before { --a: var(--glacier); }
 .card-checkpoint[data-agent='claude']::before { --a: var(--ember); }
+.card-checkpoint[data-agent='freebuff']::before { --a: var(--freebuff); }
 .card-checkpoint[data-agent] .ckpt-icon { color: var(--a); background: var(--a-soft); border-color: var(--a-line); }
 .ckpt-msg .vchip { margin-right: 8px; }
 

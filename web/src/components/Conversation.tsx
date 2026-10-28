@@ -6,7 +6,7 @@ import type { SessionView } from '@shared/reducer';
 import { buildItems, type Item } from '../lib/timeline';
 import { useApp, useUI } from '../lib/store';
 import { useLina } from '../lib/lina';
-import { AGENT_NAME } from '../lib/format';
+import { AGENT_NAME, other } from '../lib/format';
 import { MessageGroup, Notice, PendingBubble, StreamingMessage, WorkingLine } from './timeline/Message';
 import { ActivityGroup, CheckpointCard, ErrorCard, IntegrationCard, PhaseDivider, ResponseCard, ReviewCard, SplitCard, TestsCard } from './timeline/Cards';
 import { lastTurns, teamSentence } from '../lib/modes';
@@ -178,7 +178,7 @@ function TimelineItem({ it, focusSeq, cfg, activeApproval, lastError }: {
     case 'phase': return <PhaseDivider e={it.e} cfg={cfg} />;
     case 'activity': return <ActivityGroup agent={it.agent} acts={it.acts} start={it.start} end={it.end} />;
     case 'review': return <ReviewCard e={it.e} />;
-    case 'response': return <ResponseCard e={it.e} reviewer={it.e.data.developer === 'codex' ? 'claude' : 'codex'} />;
+    case 'response': return <ResponseCard e={it.e} reviewer={other(it.e.data.developer)} />;
     case 'tests': return <TestsCard e={it.e} />;
     case 'checkpoint': return <CheckpointCard e={it.e} prev={it.prev} />;
     case 'error': return <ErrorCard e={it.e} isLast={lastError} />;
@@ -212,7 +212,7 @@ function EmptySession({ cfg }: { cfg: SessionConfig }) {
           </button>
         ))}
       </div>
-      <p className="hero-hint">Tip: mention <code>@codex</code> or <code>@claude</code> to ask one agent directly.</p>
+      <p className="hero-hint">Tip: {AGENT_IDS.map((a, i) => <span key={a}>{i > 0 && (i === AGENT_IDS.length - 1 ? ' or ' : ', ')}<code>@{a}</code></span>)} to ask one agent directly.</p>
     </div>
   );
 }

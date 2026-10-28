@@ -67,8 +67,8 @@ export function actorForPhase(phase: Phase, cfg: Pick<SessionConfig, 'mode' | 'd
 export function teamSentence(cfg: Pick<SessionConfig, 'mode' | 'developer' | 'reviewer' | 'team'>): string {
   const D = AGENT_NAME[cfg.developer], R = AGENT_NAME[cfg.reviewer];
   switch (cfg.mode) {
-    case 'compete': return 'Codex and Claude each build it independently, then review each other. You pick the winner.';
-    case 'parallel': return `${D} splits the task; both build their part at the same time and review each other's.`;
+    case 'compete': return `${AGENT_IDS.map((a) => AGENT_NAME[a]).join(' and ')} each build it independently, then review each other. You pick the winner.`;
+    case 'parallel': return `${D} splits the task; the agents build their parts at the same time and review each other's.`;
     case 'solo': return `${D} develops; LINA verifies the tests.`;
     case 'custom': {
       const t = teamOf(cfg);

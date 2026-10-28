@@ -6,7 +6,7 @@ import type { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { Transform } from 'node:stream';
 import {
-  AGENT_IDS, IMPLEMENTED_MODES, type AgentId, type AnyLinaEvent, type ApplyStrategy, type Attachment, type DiffFile,
+  AGENT_IDS, IMPLEMENTED_MODES, peerOf, zeroUsage, type AgentId, type AnyLinaEvent, type ApplyStrategy, type Attachment, type DiffFile,
   type Project, type ProjectSettings, type SearchHit, type Session, type SessionConfig, type SessionSnapshot, type Settings,
   type TeamConfig, type TreeEntry,
 } from '../shared/types.js';
@@ -26,7 +26,7 @@ export const SNAPSHOT_EVENT_CAP = 2000;
 const DEFAULT_TITLE = 'New session';
 export const ATTACHMENT_MAX = 20 * 1024 * 1024;
 
-function otherAgent(a: AgentId): AgentId { return a === 'codex' ? 'claude' : 'codex'; }
+function otherAgent(a: AgentId): AgentId { return peerOf(a); }
 
 export class SessionManager {
   private editing = new Set<string>();
@@ -310,6 +310,22 @@ export class SessionManager {
       // config.reviewer = the first reviewer (may be the developer itself), else the other agent.
       reviewer = team.reviewers[0] ?? otherAgent(developer);
     }
+    // parallel: every participant builds one part at the same time. Default: developer + reviewer.
+    let participants: AgentId[] | undefined;
+    if (c.participants !== undefined && mode !== 'parallel') {
+      throw new LinaError('participants only applies to parallel mode', 'invalid');
+    }
+    if (mode === 'parallel') {
+      const requested = c.participants ?? (base?.mode === 'parallel' ? base.participants : undefined);
+      if (c.participants !== undefined) {
+        if (!Array.isArray(c.participants) || c.participants.length < 2) throw new LinaError('participants needs at least two agents', 'invalid');
+        if (new Set(c.participants).size !== c.participants.length) throw new LinaError('participants must be distinct agents', 'invalid');
+        for (const a of c.participants) if (!isAgentId(a)) throw new LinaError(`Unknown agent: ${String(a)}`, 'invalid');
+      }
+      const list = [...new Set([developer, ...(requested ?? [reviewer])])];
+      if (list.length > 2) participants = list;
+      if (!list.includes(reviewer)) reviewer = list.find((a) => a !== developer) ?? reviewer;
+    }
     const models = { ...(base?.models ?? s.models), ...(c.models ? validateModels(c.models) : {}) } as SessionConfig['models'];
     for (const a of AGENT_IDS) if (!models[a]?.model) models[a] = s.models[a];
     const cfg: SessionConfig = {
@@ -326,10 +342,11 @@ export class SessionManager {
       if (typeof goal !== 'string' || !goal.trim() || goal.length > 20000) throw new LinaError('goal must be non-empty text (maximum 20000 characters)', 'invalid');
       if (c.goal !== undefined && /^(?:resume|pause|cancel|status)$/i.test(goal.trim())) throw new LinaError(`"${goal.trim()}" controls a saved goal; it is not a new objective. Use /${goal.trim().toLowerCase() === 'status' ? 'goal' : goal.trim().toLowerCase()} in the terminal. Reopen with lina attach if an older terminal still creates goals for control commands.`, 'invalid');
       if (interactionMode !== 'workflow') throw new LinaError('Goals require structured workflow mode', 'invalid');
-      if (!['pair', 'architect'].includes(mode)) throw new LinaError('Goals require pair or architect mode', 'invalid');
+      if (!['pair', 'architect', 'custom'].includes(mode)) throw new LinaError('Goals require pair, architect or custom mode', 'invalid');
       cfg.goal = goal.trim();
     }
     if (team) cfg.team = team;
+    if (participants) cfg.participants = participants;
     const tc = c.testCommand !== undefined ? c.testCommand : base?.testCommand;
     if (tc !== undefined && tc !== null) {
       if (typeof tc !== 'string') throw new LinaError('testCommand must be a string', 'invalid');
@@ -354,10 +371,7 @@ export class SessionManager {
     const session: Session = {
       id, projectId: project.id, title, status: 'idle', phase: 'idle', round: 0, createdAt: now, updatedAt: now, config,
       workspacePath: ws.path, branch: ws.branch, baseCommit: ws.baseCommit,
-      usage: {
-        codex: { inputTokens: 0, outputTokens: 0, cachedInputTokens: 0, costUsd: 0, turns: 0 },
-        claude: { inputTokens: 0, outputTokens: 0, cachedInputTokens: 0, costUsd: 0, turns: 0 },
-      },
+      usage: zeroUsage(),
       lastSeq: 0, pendingMessages: 0,
     };
     if (config.mock) session.mock = true;
@@ -463,7 +477,7 @@ export class SessionManager {
     const raw = body.text.trim();
     // A saved goal is a team objective, even when its text starts with @mentions.
     const startingGoal = !!r.session.config.goal && r.state.step === 'idle' && !r.state.task;
-    const m = startingGoal ? null : /^@(codex|claude)\b[:,]?\s*/i.exec(raw);
+    const m = startingGoal ? null : new RegExp(`^@(${AGENT_IDS.join('|')})\\b[:,]?\\s*`, 'i').exec(raw);
     const mention = m ? (m[1].toLowerCase() as AgentId) : undefined;
     const text = m ? raw.slice(m[0].length).trim() || raw : raw;
     const atts: Attachment[] = [];
@@ -577,7 +591,7 @@ export class SessionManager {
         break;
       }
       case 'choose':
-        if (!variant) throw new LinaError('variant is required (codex or claude)', 'invalid');
+        if (!variant) throw new LinaError(`variant is required (${AGENT_IDS.join(' or ')})`, 'invalid');
         await r.choose(variant, note);
         break;
       case 'reject': r.reject(note); break;

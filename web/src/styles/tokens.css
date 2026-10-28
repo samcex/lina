@@ -1,5 +1,5 @@
 /* LINA design tokens — "Ink & Orbit".
-   Deep layered ink surfaces; two agent hues (glacier / ember) orbiting an iris core. */
+   Deep layered ink surfaces; agent hues (glacier / ember / lime) orbiting an iris core. */
 
 :root {
   --font-ui: 'Inter Variable', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
@@ -69,6 +69,11 @@
   --ember-hi: #ffc6a3;
   --ember-soft: rgba(255, 158, 107, 0.11);
   --ember-line: rgba(255, 158, 107, 0.32);
+
+  --freebuff: #a3e635;
+  --freebuff-hi: #d2f58c;
+  --freebuff-soft: rgba(163, 230, 53, 0.11);
+  --freebuff-line: rgba(163, 230, 53, 0.32);
 
   --pearl: #dfe2ee;
   --pearl-soft: rgba(223, 226, 238, 0.07);
@@ -149,6 +154,11 @@
   --ember-soft: rgba(208, 88, 31, 0.08);
   --ember-line: rgba(208, 88, 31, 0.3);
 
+  --freebuff: #4d7c0f;
+  --freebuff-hi: #7bab1d;
+  --freebuff-soft: rgba(77, 124, 15, 0.08);
+  --freebuff-line: rgba(77, 124, 15, 0.3);
+
   --pearl: #3b4157;
   --pearl-soft: rgba(59, 65, 87, 0.06);
   --pearl-line: rgba(59, 65, 87, 0.16);
@@ -191,5 +201,6 @@
 /* Per-actor accent: any element with data-actor / data-agent gets --a / --a-soft / --a-line. */
 [data-actor='codex'], [data-agent='codex'] { --a: var(--glacier); --a-hi: var(--glacier-hi); --a-soft: var(--glacier-soft); --a-line: var(--glacier-line); }
 [data-actor='claude'], [data-agent='claude'] { --a: var(--ember); --a-hi: var(--ember-hi); --a-soft: var(--ember-soft); --a-line: var(--ember-line); }
+[data-actor='freebuff'], [data-agent='freebuff'] { --a: var(--freebuff); --a-hi: var(--freebuff-hi); --a-soft: var(--freebuff-soft); --a-line: var(--freebuff-line); }
 [data-actor='lina'] { --a: var(--iris); --a-hi: var(--iris-hi); --a-soft: var(--iris-soft); --a-line: var(--iris-line); }
 [data-actor='user'] { --a: var(--pearl); --a-hi: var(--pearl); --a-soft: var(--pearl-soft); --a-line: var(--pearl-line); }

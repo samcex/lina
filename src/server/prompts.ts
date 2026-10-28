@@ -2,7 +2,7 @@
 // the request/plan, so those are only sent on an agent's first turn ("primed" = false).
 // Every step prompt starts with a machine marker `<!-- lina:step=<step> round=<n> -->`
 // (used by the mock adapter and handy when reading transcripts).
-import type { Finding, TestRun, WorkPart } from '../shared/types.js';
+import { AGENT_IDS, type AgentId, type Finding, type TestRun, type WorkPart } from '../shared/types.js';
 
 export type PromptStep =
   | 'feedback' | 'chat' | 'plan' | 'plan_review' | 'implement' | 'review' | 'revise' | 'consult' | 'repair' | 'deliver'
@@ -28,6 +28,18 @@ export const SPLIT_BLOCK_EXAMPLE = [
   ' {"agent":"claude","title":"Short title","scope":"What this agent builds","files":["src/b.ts"]}]}',
   '```',
 ].join('\n');
+
+/** The same block for an arbitrary team (one part per agent, stable order). */
+export function splitBlockExample(agents: string[]): string {
+  const files = ['src/a.ts","test/a.test.ts', 'src/b.ts', 'src/c.ts'];
+  const parts = agents.map((agent, i) => ({ agent, title: 'Short title', scope: 'What this agent builds', files: [files[i] ?? `src/${agent}.ts`] }));
+  return ['```lina-split', JSON.stringify({ parts }), '```'].join('\n');
+}
+
+function agentList(agents: string[]): string {
+  if (agents.length <= 1) return agents[0] ?? '';
+  return `${agents.slice(0, -1).join(', ')} and ${agents[agents.length - 1]}`;
+}
 
 export const RESPONSE_BLOCK_EXAMPLE = [
   '```lina-response',
@@ -80,7 +92,7 @@ export function chatPrompt(ctx: { text: string; attachments?: { name: string; pa
   ]);
 }
 
-export interface PeerHandoff { agent: 'codex' | 'claude'; message: string }
+export interface PeerHandoff { agent: AgentId; message: string }
 
 export function parseChatReply(text: string, writing = false): { text: string; test?: boolean; review?: boolean; handoff?: PeerHandoff } {
   const fenced = /\n?```lina-chat\s*\n([\s\S]*?)\n```\s*$/.exec(text);
@@ -93,8 +105,8 @@ export function parseChatReply(text: string, writing = false): { text: string; t
     const value = JSON.parse(match[1]);
     if (!value || typeof value !== 'object' || Array.isArray(value)) return { text: text.trim() };
     if (!fenced && (!text.slice(0, match.index).trim() || Object.keys(value).length !== 2 || typeof value.test !== 'boolean' || typeof value.review !== 'boolean')) return { text: text.trim() };
-    const handoff = value.handoff && ['codex', 'claude'].includes(value.handoff.agent) && typeof value.handoff.message === 'string' && value.handoff.message.trim()
-      ? { agent: value.handoff.agent as 'codex' | 'claude', message: value.handoff.message.trim().slice(0, 10000) } : undefined;
+    const handoff = value.handoff && (AGENT_IDS as string[]).includes(String(value.handoff.agent)) && typeof value.handoff.message === 'string' && value.handoff.message.trim()
+      ? { agent: value.handoff.agent as AgentId, message: value.handoff.message.trim().slice(0, 10000) } : undefined;
     return { text: text.slice(0, match.index).trim(), ...(typeof value.test === 'boolean' ? { test: value.test } : {}), ...(typeof value.review === 'boolean' ? { review: value.review } : {}), ...(handoff ? { handoff } : {}) };
   } catch { return { text: text.trim() }; }
 }
@@ -229,33 +241,39 @@ export function partLine(p: WorkPart): string {
   return `**${p.title}** — ${p.scope}${p.files?.length ? ` (files: ${p.files.join(', ')})` : ''}`;
 }
 
-/** parallel: the lead plans and splits the task into one part per agent. */
-export function splitPlanPrompt(ctx: TaskContext & { lead: string; other: string }): string {
+/** parallel: the lead plans and splits the task into one part per participant. */
+export function splitPlanPrompt(ctx: TaskContext & { lead: string; others: string[] }): string {
+  const all = [ctx.lead, ...ctx.others];
+  const count = all.length;
   return join([
     marker('split', 0),
     taskBlock(ctx),
     ownerBlock(ctx.owner),
-    `Step: PLAN AND SPLIT (read-only). You lead this task. You and ${ctx.other} will implement it at the same time, each in a separate git worktree; LINA then merges both branches and you review each other's part. Inspect the relevant code, then reply with a concise implementation plan (at most ~12 bullets: approach, interfaces between the parts, risks, how to test) and split the work into exactly two parts — one for you (${ctx.lead}) and one for ${ctx.other}. Give each part clear ownership of files so you never edit the same file; a shared file (index, config, registry…) belongs to exactly one part. Do not edit files yet. End with exactly one block:\n${SPLIT_BLOCK_EXAMPLE}`,
+    `Step: PLAN AND SPLIT (read-only). You lead this task. ${count > 1 ? `You and ${agentList(ctx.others)}` : 'You'} will implement it at the same time, each in a separate git worktree; LINA then merges ${count > 1 ? 'all branches' : 'the branch'} and ${count > 2 ? 'each of you cross-reviews another part' : 'you review each other\'s part'}. Inspect the relevant code, then reply with a concise implementation plan (at most ~12 bullets: approach, interfaces between the parts, risks, how to test) and split the work into exactly ${count} part${count === 1 ? '' : 's'} — one per agent: one for you (${ctx.lead})${ctx.others.length ? ` and one for each of ${agentList(ctx.others)}` : ''}. Give each part clear ownership of files so no two agents edit the same file; a shared file (index, config, registry…) belongs to exactly one part. Do not edit files yet. End with exactly one block:\n${splitBlockExample(all)}`,
   ]);
 }
 
-export function splitRepairPrompt(lead: string, other: string): string {
+export function splitRepairPrompt(lead: string, others: string[]): string {
+  const all = [lead, ...others];
   return join([
     marker('split_repair', 0),
-    `Your plan did not end with a valid lina-split block. Output ONLY that block (valid JSON, no prose): exactly one part for ${lead} and one for ${other}, with non-overlapping files:\n${SPLIT_BLOCK_EXAMPLE}`,
+    `Your plan did not end with a valid lina-split block. Output ONLY that block (valid JSON, no prose): exactly one part per agent (${all.join(', ')}), with non-overlapping files:\n${splitBlockExample(all)}`,
   ]);
 }
 
 /** parallel: implement one part in the agent's own worktree. */
-export function partPrompt(ctx: TaskContext & { part: WorkPart; other: WorkPart; lead: string }): string {
+export function partPrompt(ctx: TaskContext & { part: WorkPart; others: WorkPart[]; lead: string }): string {
+  const others = ctx.others.filter((p) => p.agent !== ctx.part.agent);
   return join([
     marker('part', 0),
     !ctx.primed && taskBlock(ctx),
     ctx.plan && `The plan (${ctx.lead === ctx.self ? 'yours' : `by ${ctx.lead}, who leads this task`}):\n${ctx.plan}`,
     `Your part: ${partLine(ctx.part)}`,
-    `The other part, built by ${ctx.other.agent} at the same time in its own worktree: ${partLine(ctx.other)}\nDo NOT edit files the other part owns. Where you depend on it, code against the interface in the plan and mention it in your summary.`,
+    others.length
+      ? `${others.length === 1 ? 'The other part' : 'The other parts'}, built at the same time in separate worktrees:\n${others.map((p) => `- ${p.agent}: ${partLine(p)}`).join('\n')}\nDo NOT edit files another part owns. Where you depend on one, code against the interface in the plan and mention it in your summary.`
+      : undefined,
     ownerBlock(ctx.owner),
-    'Step: IMPLEMENT YOUR PART. You work in your own git worktree; LINA merges both parts afterwards. Make the changes now and run the relevant tests. Do not commit. Finish with a short summary of what changed and how you verified it.',
+    'Step: IMPLEMENT YOUR PART. You work in your own git worktree; LINA merges all parts afterwards. Make the changes now and run the relevant tests. Do not commit. Finish with a short summary of what changed and how you verified it.',
   ]);
 }
 
@@ -291,7 +309,7 @@ export function crossReviewPrompt(ctx: TaskContext & {
   if (!ctx.primed) parts.push(taskBlock(ctx), ctx.plan && `The plan:\n${ctx.plan}`);
   parts.push(ownerBlock(ctx.owner));
   if (ctx.author) parts.push(`You are reviewing ${ctx.author}'s version: ${ctx.author} implemented the whole request independently, in the worktree that is your working directory now. Judge this version on its own merits (your own version is elsewhere and is reviewed by ${ctx.author}). Every finding you raise is for ${ctx.author} to fix.`);
-  if (ctx.focus) parts.push(`Both parts are merged in this workspace. Focus on the part ${ctx.focus.agent} built: ${partLine(ctx.focus)}\nFindings go to ${ctx.focus.agent} by default. Add "owner":"codex"|"claude" to a finding that the other part's author must fix instead.`);
+  if (ctx.focus) parts.push(`All parts are merged in this workspace. Focus on the part ${ctx.focus.agent} built: ${partLine(ctx.focus)}\nFindings go to ${ctx.focus.agent} by default. Add "owner":${AGENT_IDS.map((a) => `\"${a}\"`).join('|')} to a finding that another part's author must fix instead.`);
   parts.push(`Review round ${ctx.round}. Base commit: ${ctx.base} — inspect with \`git diff ${ctx.base.slice(0, 12)}\`.\nChanged files:\n${ctx.diffStat || '(no changes)'}`);
   parts.push(testLine(ctx.test));
   parts.push(findingsBlock(ctx.findings, ctx.others));

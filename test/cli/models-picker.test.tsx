@@ -8,7 +8,7 @@ import { TuiStore, type ClientLike } from '../../src/cli/tui/store.js';
 import { installMouse } from '../../src/cli/tui/mouse.js';
 import { stripAnsi } from '../../src/cli/ansi.js';
 import { viewFromSnapshot } from '../../src/shared/reducer.js';
-import type { AgentId, AgentModels, SessionConfig, Settings } from '../../src/shared/types.js';
+import { AGENT_IDS, type AgentId, type AgentModels, type SessionConfig, type Settings } from '../../src/shared/types.js';
 import { project, snapshot } from './fixture.js';
 
 const tick = () => new Promise((resolve) => setTimeout(resolve, 90));
@@ -17,10 +17,10 @@ afterEach(() => { cleanup?.(); cleanup = undefined; });
 
 function harness({ agent, developer = 'codex', app = false, fail = false }: { agent?: AgentId; developer?: AgentId; app?: boolean; fail?: boolean } = {}) {
   const snap = snapshot();
-  snap.session = { ...snap.session, config: { ...snap.session.config, developer, models: { codex: { model: 'gpt-beta', effort: 'high' }, claude: { model: 'opus', effort: 'medium' } } } };
-  const catalog = Object.fromEntries((['codex', 'claude'] as const).map((a) => [a, {
+  snap.session = { ...snap.session, config: { ...snap.session.config, developer, models: { codex: { model: 'gpt-beta', effort: 'high' }, claude: { model: 'opus', effort: 'medium' }, freebuff: { model: 'auto' } } } };
+  const catalog = Object.fromEntries(AGENT_IDS.map((a) => [a, {
     agent: a, installed: true, discoveredVia: 'fixture',
-    models: (a === 'codex' ? ['gpt-alpha', 'gpt-beta', 'gpt-gamma'] : ['opus', 'sonnet']).map((id) => ({ id, label: id, source: 'catalog', efforts: ['low', 'medium', 'high'], defaultEffort: 'medium' })),
+    models: (a === 'codex' ? ['gpt-alpha', 'gpt-beta', 'gpt-gamma'] : a === 'freebuff' ? ['glm-5.3-flash', 'auto'] : ['opus', 'sonnet']).map((id) => ({ id, label: id, source: 'catalog', efforts: ['low', 'medium', 'high'], defaultEffort: 'medium' })),
   }])) as Record<AgentId, AgentModels>;
   const update = vi.fn(async (_id: string, body: { config: Partial<SessionConfig> }) => {
     if (fail) throw new Error('Connection lost');
@@ -57,14 +57,18 @@ it('opens at the current model, stages effort changes and applies once with Ente
   expect(h.closed).toHaveBeenCalledOnce();
 });
 
-it('starts on the developer tab and switches agents with Tab', async () => {
+it('starts on the developer tab and cycles every agent with Tab', async () => {
   const h = harness({ developer: 'claude' }); await tick();
   expect(h.text()).toContain('› opus');
-  h.stdin.write('\t'); await tick();
+  h.stdin.write('\t'); await tick(); // Claude → Freebuff
+  expect(h.text()).toContain('› auto');
+  h.stdin.write('\t'); await tick(); // Freebuff → Codex
+  expect(h.text()).toContain('› gpt-beta');
   h.stdin.write('\x1b[B'); await tick();
   h.stdin.write('\r'); await tick();
   expect(h.update.mock.calls[0][1].config.models?.codex?.model).toBe('gpt-gamma');
   expect(h.update.mock.calls[0][1].config.models?.claude).toEqual({ model: 'opus', effort: 'medium' });
+  expect(h.update.mock.calls[0][1].config.models?.freebuff).toEqual({ model: 'auto' });
 });
 
 it('filters model names and selects the result without a validation probe', async () => {

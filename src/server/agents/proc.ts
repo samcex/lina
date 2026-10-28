@@ -13,12 +13,19 @@ export interface RunProcessOptions {
   env?: NodeJS.ProcessEnv;
   /** Written to the child's stdin, which is then always closed. */
   stdin?: string;
+  /**
+   * Takes over the child's stdin instead of writing+closing it. Interactive TUIs need
+   * to be typed into after they are ready; call `end` when no more input is coming.
+   */
+  stdinControl?: (write: (s: string) => boolean, end: () => void) => void;
   signal?: AbortSignal;
   /** Hard limit for the whole process. */
   turnTimeoutMs?: number;
   /** Limit for a period without any stdout/stderr output. */
   idleTimeoutMs?: number;
   onLine?: (line: string) => void;
+  /** Raw stdout text as it arrives (TUIs redraw without newlines, so lines alone can miss screen state). */
+  onData?: (text: string) => void;
   onStderr?: (chunk: string) => void;
   /** Grace period between SIGTERM and SIGKILL (default 5000ms). */
   killGraceMs?: number;
@@ -195,7 +202,11 @@ export function runProcess(opts: RunProcessOptions): Promise<RunProcessResult> {
       timers.push(setTimeout(() => { if (!timedOut) timedOut = 'turn'; terminate(); }, opts.turnTimeoutMs));
     }
 
-    child.stdout!.on('data', (chunk: Buffer) => { resetIdle(); splitter.push(chunk); });
+    child.stdout!.on('data', (chunk: Buffer) => {
+      resetIdle();
+      try { opts.onData?.(chunk.toString('utf8')); } catch { /* consumer errors must not break the pipe */ }
+      splitter.push(chunk);
+    });
     child.stderr!.on('data', (chunk: Buffer) => {
       resetIdle();
       const s = chunk.toString('utf8');
@@ -240,8 +251,15 @@ export function runProcess(opts: RunProcessOptions): Promise<RunProcessResult> {
     });
 
     try {
-      if (opts.stdin) child.stdin!.write(opts.stdin);
-      child.stdin!.end();
+      if (opts.stdinControl) {
+        opts.stdinControl(
+          (s) => { try { return child.stdin!.write(s); } catch { return false; } },
+          () => { try { child.stdin!.end(); } catch { /* already closed */ } },
+        );
+      } else {
+        if (opts.stdin) child.stdin!.write(opts.stdin);
+        child.stdin!.end();
+      }
     } catch { /* child already gone */ }
   });
 }

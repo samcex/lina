@@ -14,7 +14,7 @@ import { formatTeamSpec, teamSummary } from './team.js';
 import { enableService, disableService, serviceName } from './service.js';
 import { selfEntry, baseUrl, clientFor, discoverDaemon, ensureDaemon, startDaemon, stopDaemon, tailFile, DaemonError } from './daemon-control.js';
 import { formatAgo, modelLabel, shortId } from './layout.js';
-import { C } from './theme.js';
+import { C, AGENT_NAME, actorColor } from './theme.js';
 import { doctorLines } from './tui/overlays.js';
 import { expandHome, findProjectForPath, openBrowser, realpathOr, webUrl } from './util.js';
 import { terminalQr } from './qr.js';
@@ -169,9 +169,9 @@ export async function cmdModels(a: ParsedArgs) {
   if (a.flags.json) { out(JSON.stringify(catalog, null, 2)); return; }
   for (const agent of AGENTS) {
     const c = catalog[agent];
-    const color = agent === 'codex' ? C.codex : C.claude;
+    const color = actorColor(agent);
     const cur = settings?.models[agent];
-    out(`${bold(fg(color)(agent === 'codex' ? 'Codex' : 'Claude'))} ${c?.installed ? dim(`installed${c.version ? ' ' + c.version : ''}`) : fg(C.err)('not installed')}  ${dim(`current: `)}${fg(C.text)(modelLabel(cur))}  ${dim(`via ${c?.discoveredVia ?? '?'}`)}`);
+    out(`${bold(fg(color)(AGENT_NAME[agent]))} ${c?.installed ? dim(`installed${c.version ? ' ' + c.version : ''}`) : fg(C.err)('not installed')}  ${dim(`current: `)}${fg(C.text)(modelLabel(cur))}  ${dim(`via ${c?.discoveredVia ?? '?'}`)}`);
     if (c?.error) out('  ' + fg(C.err)(c.error));
     const rows = (c?.models ?? []).map((m) => {
       const mark = m.validation ? (m.validation.ok ? fg(C.ok)('✔') : fg(C.err)('✖')) : dim('·');
@@ -200,7 +200,7 @@ const SANDBOX_HINT: Record<Settings['testSandbox'], string> = {
 /** Human view of the daemon settings (defaults for new sessions). */
 export function settingsLines(s: Settings): string[] {
   const k = (key: string, v: string, note = '') => `  ${padAnsi(fg(C.lina)(key), 16)}${v}${note ? '  ' + dim(note) : ''}`;
-  const name = (a: AgentId) => fg(a === 'codex' ? C.codex : C.claude)(a);
+  const name = (a: AgentId) => fg(actorColor(a))(AGENT_NAME[a]);
   return [
     k('mode', bold(s.defaultMode), MODE_LABEL[s.defaultMode] ?? ''),
     k('developer', name(s.developer), 'implements in pair/architect/solo; leads in parallel'),

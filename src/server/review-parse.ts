@@ -3,7 +3,7 @@
 //   ```lina-response { items: [{ id, action, note }] } ```
 //   ```lina-split { parts: [{ agent, title, scope, files[] }] } ```   (parallel planning)
 // The last matching block wins. Tolerates ```json fences, trailing commas, smart quotes, missing fields.
-import type { AgentId, Severity, WorkPart } from '../shared/types.js';
+import { AGENT_IDS, type AgentId, type Severity, type WorkPart } from '../shared/types.js';
 
 export interface ParsedFinding {
   id?: string;
@@ -243,11 +243,11 @@ export interface ParsedSplit { parts: WorkPart[] }
 
 function agentOf(v: unknown): AgentId | undefined {
   const a = str(v).toLowerCase();
-  return a === 'codex' || a === 'claude' ? a : undefined;
+  return (AGENT_IDS as string[]).includes(a) ? (a as AgentId) : undefined;
 }
 
-/** parallel: the lead's split — exactly one part per agent, each with a title or scope. */
-export function parseSplit(text: string): ParseOutcome<ParsedSplit> {
+/** parallel: the lead's split — exactly one part per participating agent, each with a title or scope. */
+export function parseSplit(text: string, agents: AgentId[] = AGENT_IDS.slice(0, 2)): ParseOutcome<ParsedSplit> {
   const { value, error, all } = pickBlock(text, 'lina-split', (v) => 'parts' in v);
   const prose = stripBlocks(text, all);
   if (!value) return { prose: prose || text.trim(), error };
@@ -269,7 +269,10 @@ export function parseSplit(text: string): ParseOutcome<ParsedSplit> {
     if (files.length) p.files = files;
     parts.push(p);
   }
-  if (parts.length !== 2) return { prose, error: `lina-split needs exactly one part per agent (got ${parts.length})` };
+  const expected = new Set(agents);
+  const unexpected = parts.find((p) => !expected.has(p.agent));
+  if (unexpected) return { prose, error: `lina-split has a part for ${unexpected.agent}, who is not part of this task (expected: ${agents.join(', ')})` };
+  if (parts.length !== agents.length) return { prose, error: `lina-split needs exactly one part per agent: ${agents.join(', ')} (got ${parts.length})` };
   return { prose, value: { parts } };
 }
 

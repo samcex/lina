@@ -1,7 +1,7 @@
-import type { Actor, AgentId, Effort, SessionStatus } from '@shared/types';
+import { AGENT_LABEL, peerOf, type Actor, type AgentId, type Effort, type SessionStatus } from '@shared/types';
 
-export const AGENT_NAME: Record<Actor, string> = { user: 'You', lina: 'LINA', codex: 'Codex', claude: 'Claude' };
-export const other = (a: AgentId): AgentId => (a === 'codex' ? 'claude' : 'codex');
+export const AGENT_NAME: Record<Actor, string> = { user: 'You', lina: 'LINA', ...AGENT_LABEL };
+export const other = (a: AgentId): AgentId => peerOf(a);
 
 export function relTime(ts: number, now = Date.now()): string {
   const d = Math.max(0, now - ts);

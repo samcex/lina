@@ -17,14 +17,14 @@ export function LivePanel({ view }: { view: SessionView }) {
   const selected = useUI((u) => u.liveAgent);
   const lina = useLina();
   const turns = useMemo(() => lastTurns(view.timeline), [view.timeline]);
-  const both = AGENT_IDS.every((a) => isBusy(view.agents[a].status));
+  const allActive = AGENT_IDS.every((a) => isBusy(view.agents[a].status));
   return (
-    <div className={cx('live', both && 'is-concurrent')}>
+    <div className={cx('live', allActive && 'is-concurrent')}>
       <div className="seg" role="group" aria-label="Agent activity">
         <button className={cx('seg-item', selected === null && 'is-on')} aria-pressed={selected === null} onClick={() => lina.setUI({ liveAgent: null })}>All agents</button>
         {AGENT_IDS.map((agent) => <button key={agent} className={cx('seg-item', selected === agent && 'is-on')} aria-pressed={selected === agent} onClick={() => lina.inspectAgent(agent)}>{AGENT_NAME[agent]}</button>)}
       </div>
-      {both && <div className="live-both"><i data-agent="codex" /><i data-agent="claude" /> Both agents are working at the same time</div>}
+      {allActive && <div className="live-both">{AGENT_IDS.map((a) => <i key={a} data-agent={a} />)} All agents are working at the same time</div>}
       {AGENT_IDS.filter((a) => selected === null || a === selected).map((a) => <AgentPanel key={a} agent={a} view={view} turn={turns[a]} />)}
       <ActivityLegend />
     </div>

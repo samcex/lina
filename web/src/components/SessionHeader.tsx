@@ -3,7 +3,7 @@ import {
   ArrowLeftRight, BarChart3, Check, ChevronDown, FlaskRound, GitBranch, PanelLeft, PanelRight, Pause, Play, RotateCcw, Square, Menu,
 } from 'lucide-react';
 import type { AgentId, Mode, Session, SessionConfig } from '@shared/types';
-import { AGENT_IDS, teamOf } from '@shared/types';
+import { AGENT_IDS, AGENT_LABEL, teamOf } from '@shared/types';
 import type { SessionView } from '@shared/reducer';
 import { useApp, useUI } from '../lib/store';
 import { useLina } from '../lib/lina';
@@ -47,12 +47,12 @@ export function SessionHeader({ view }: { view: SessionView }) {
             {cfg.workspaceMode === 'direct' && <button className="tag" disabled={session.status === 'running'} title="Switch between natural chat and the structured playbook" onClick={() => void lina.updateConfig({ interactionMode: cfg.interactionMode === 'workflow' ? 'chat' : 'workflow' })}>{cfg.interactionMode === 'workflow' ? 'Workflow' : 'Chat'}</button>}
             {settings && <span className="tag" title="Developer access; reviewers remain read-only">{settings.accessMode === 'full' ? 'Full access' : 'Restricted'}</span>}
             {session.pendingMessages > 0 && <span className="tag tag-iris">{session.pendingMessages} queued</span>}
-            {session.chosenVariant && <VariantChip agent={session.chosenVariant} text={`${session.chosenVariant === 'codex' ? 'Codex' : 'Claude'}'s version chosen`} />}
+            {session.chosenVariant && <VariantChip agent={session.chosenVariant} text={`${AGENT_LABEL[session.chosenVariant]}'s version chosen`} />}
           </div>
         </div>
         <div className="shead-right">
           {(session.mock || cfg.mock) && (
-            <span className="tag tag-warn mock-badge" data-tip="Scripted mock agents — no real Codex/Claude calls"><FlaskRound size={12} /> Mock</span>
+            <span className="tag tag-warn mock-badge" data-tip="Scripted mock agents — no real provider calls"><FlaskRound size={12} /> Mock</span>
           )}
           <span className={cx('conn', `is-${conn}`)} data-tip={conn === 'open' ? 'Live connection to the LINA daemon' : conn === 'connecting' ? 'Connecting…' : 'Disconnected — retrying'}>
             <i />{conn === 'open' ? 'Live' : conn === 'connecting' ? 'Connecting' : 'Offline'}
@@ -120,6 +120,11 @@ export function SessionHeader({ view }: { view: SessionView }) {
                   onInspect={() => lina.inspectAgent(a)}
                   onChange={(c) => void lina.updateConfig({ models: { ...cfg.models, [a]: c } as Session['config']['models'] }, `${AGENT_NAME[a]} → ${c.model}${c.effort ? ` · ${c.effort}` : ''}`)}
                 />
+                {a === 'freebuff' && (
+                  <div className="freebuff-badge" data-agent={a} title="Freebuff session hours - check the TUI for current balance">
+                    <span className="freebuff-badge-text">{cfg.models[a]?.model ?? 'auto'}</span>
+                  </div>
+                )}
               </div>
             );
           })}
@@ -191,8 +196,9 @@ function UsageMeter({ view }: { view: SessionView }) {
   const usage = view.session.usage;
   const total = AGENT_IDS.reduce((n, a) => n + (usage[a]?.inputTokens ?? 0) + (usage[a]?.outputTokens ?? 0), 0);
   const cost = AGENT_IDS.reduce((n, a) => n + (usage[a]?.costUsd ?? 0), 0);
-  const claudeRl = view.rateLimits.claude;
-  const windows = claudeRl ? Object.entries(claudeRl.windows) : [];
+  const rlAgent = AGENT_IDS.find((a) => view.rateLimits[a] && Object.keys(view.rateLimits[a]!.windows).length);
+  const rl = rlAgent ? view.rateLimits[rlAgent] : undefined;
+  const windows = rl ? Object.entries(rl.windows) : [];
   const brief = windows.slice(0, 2).map(([k, w]) => `${windowLabel(k)} ${Math.round(w.utilization * 100)}%`).join(' · ');
   return (
     <Popover
@@ -201,7 +207,7 @@ function UsageMeter({ view }: { view: SessionView }) {
         <button className={cx('usage-btn', open && 'is-open')} onClick={toggle} aria-label="Usage details" aria-expanded={open}>
           <BarChart3 size={13} />
           <span className="mono">{tokens(total)}</span>
-          {brief && <span className="usage-rl" data-agent="claude">{brief}</span>}
+          {rlAgent && brief && <span className="usage-rl" data-agent={rlAgent}>{brief}</span>}
         </button>
       )}
     >

@@ -11,6 +11,7 @@ import type {
 } from '../../shared/types.js';
 import { defaultTeam, rolesForTeam, teamSummary } from '../team.js';
 import { AGENT_NAME } from '../theme.js';
+import { AGENT_IDS, peerOf } from '../../shared/types.js';
 import type { LocalNotice } from '../transcript.js';
 
 export type ConnState = 'connecting' | 'open' | 'closed' | 'offline';
@@ -67,7 +68,7 @@ export function describeError(e: unknown): { text: string; hint?: string } {
     if (e.code === 'choose_variant') {
       return {
         text: 'Pick a winner first — this compete session has two candidate versions.',
-        hint: e.hint ?? '/choose codex|claude adopts one (you can still review it), or /approve codex|claude [squash|merge|branch] picks and applies in one step. /diff codex|claude compares them.',
+        hint: e.hint ?? `/choose ${AGENT_IDS.join('|')} adopts one (you can still review it), or /approve ${AGENT_IDS.join('|')} [squash|merge|branch] picks and applies in one step. /diff ${AGENT_IDS.join('|')} compares them.`,
       };
     }
     const hint = e.hint ?? (e.code === 'dirty_worktree' ? 'Commit or stash your changes in the project, then /approve again (or /approve branch).' : undefined);
@@ -352,7 +353,8 @@ export class TuiStore {
     }
     // A dedicated conversation preserves the current task and its settings/history.
     const developer = this.currentConfig().developer ?? this.state.settings?.developer ?? 'claude';
-    const config = { ...this.currentConfig(), developer, goal: objective, mode: 'architect' as const, reviewer: developer === 'codex' ? 'claude' as const : 'codex' as const, interactionMode: 'workflow' as const, stepMode: false };
+    const current = this.currentConfig();
+    const config = { ...current, developer, goal: objective, mode: current.mode === 'custom' ? 'custom' as const : 'architect' as const, reviewer: current.mode === 'custom' ? current.reviewer : peerOf(developer), interactionMode: 'workflow' as const, stepMode: false };
     await this.createSession(objective, config);
   }
 
@@ -452,7 +454,7 @@ export class TuiStore {
     }
     try {
       this.patchSession(await this.client.approval(s.id, { decision: 'choose', variant }));
-      const rival: AgentId = variant === 'codex' ? 'claude' : 'codex';
+      const rival: AgentId = peerOf(variant);
       this.notice('success', `You picked ${AGENT_NAME[variant]}'s version — it is now the session branch, ${AGENT_NAME[rival]} reviews.`, '/approve [squash|merge|branch] applies it · /reject · or type a message to request changes');
     } catch (e) { this.fail(e, 'Could not choose'); }
   }
@@ -498,14 +500,14 @@ export class TuiStore {
   async setModel(agent: AgentId, model: string, effort?: Effort) {
     const cur = { ...this.state.settings?.models, ...this.currentConfig().models };
     const models = { ...(cur ?? {}), [agent]: { model, ...(effort ? { effort } : {}) } as AgentModelChoice } as Record<AgentId, AgentModelChoice>;
-    return this.patchConfig({ models }, `${agent === 'codex' ? 'Codex' : 'Claude'} → ${model}${effort ? ' · ' + effort : ''}`);
+    return this.patchConfig({ models }, `${AGENT_NAME[agent]} → ${model}${effort ? ' · ' + effort : ''}`);
   }
 
   async swapRoles() {
     const cfg = this.currentConfig();
     const dev: AgentId = cfg.developer ?? this.state.settings?.developer ?? 'codex';
-    const next: AgentId = dev === 'codex' ? 'claude' : 'codex';
-    await this.patchConfig({ developer: next, reviewer: dev }, `${next === 'codex' ? 'Codex' : 'Claude'} now develops, ${dev === 'codex' ? 'Codex' : 'Claude'} reviews`);
+    const next: AgentId = peerOf(dev);
+    await this.patchConfig({ developer: next, reviewer: dev }, `${AGENT_NAME[next]} now develops, ${AGENT_NAME[dev]} reviews`);
   }
 
   async setMode(mode: Mode, team?: TeamConfig) {

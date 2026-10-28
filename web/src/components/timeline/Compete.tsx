@@ -3,7 +3,7 @@ import {
   Ban, ChevronDown, CircleAlert, CircleCheck, CircleX, Coins, FileDiff, FlaskConical, GitBranch, GitMerge, GitPullRequestArrow,
   ListChecks, MessageSquarePlus, Scale, Trophy, XCircle,
 } from 'lucide-react';
-import type { AgentId, ApplyStrategy, Candidate } from '@shared/types';
+import { AGENT_IDS, type AgentId, type ApplyStrategy, type Candidate } from '@shared/types';
 import { useLina, type ApiErr } from '../../lib/lina';
 import { useApp } from '../../lib/store';
 import { AGENT_NAME, cx, other, shortSha, tokens, usd } from '../../lib/format';
@@ -52,7 +52,7 @@ export function CandidateChoice({ candidates, summary, compact }: { candidates: 
     if (e) setErr(e);
   };
 
-  const ordered = [...candidates].sort((a, b) => (a.agent === 'codex' ? -1 : 1) - (b.agent === 'codex' ? -1 : 1));
+  const ordered = [...candidates].sort((a, b) => AGENT_IDS.indexOf(a.agent) - AGENT_IDS.indexOf(b.agent));
   return (
     <div className={cx('cand-choice', compact && 'is-compact')}>
       {summary && (
@@ -83,7 +83,7 @@ export function CandidateChoice({ candidates, summary, compact }: { candidates: 
       )}
 
       <div className="approval-actions cand-foot">
-        <span className="cand-foot-note">Not happy with either? Your message goes to both agents, who revise their own version.</span>
+        <span className="cand-foot-note">Not happy with either? Your message goes to every candidate, which revises its own version.</span>
         <span className="approval-gap" />
         <button className="btn btn-ghost btn-sm" disabled={!!busy} onClick={() => { lina.prefillComposer(''); lina.focusComposer(); lina.toast({ tone: 'info', title: 'Describe the changes you want', detail: 'Both candidates revise, then test and cross-review again.' }); }}>
           <MessageSquarePlus size={14} /> Request changes

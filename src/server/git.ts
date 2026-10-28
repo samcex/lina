@@ -39,7 +39,7 @@ function workspaceRootOf(cwd: string): string | undefined {
   return first && !first.startsWith('.') ? join(root, first) : undefined;
 }
 
-const VARIANT_DIR_RE = /^(.+)--(codex|claude)$/;
+const VARIANT_DIR_RE = new RegExp(`^(.+)--(${AGENT_IDS.join('|')})$`);
 
 function realOr(p: string): string { try { return realpathSync(p); } catch { return resolve(p); } }
 

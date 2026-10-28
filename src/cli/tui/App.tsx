@@ -3,7 +3,7 @@ import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useSta
 import { Box, Text, useAnimation, useInput, usePaste, useWindowSize } from 'ink';
 import type { AgentView } from '../../shared/reducer.js';
 import type { AgentId, AgentModelChoice, Project, Role, SearchHit } from '../../shared/types.js';
-import { AGENT_IDS } from '../../shared/types.js';
+import { AGENT_IDS, byAgent, peerOf } from '../../shared/types.js';
 import { bg, bold, dim, fg, padAnsi, strWidth } from '../ansi.js';
 import { computeLayout, shortId, visibleWindow } from '../layout.js';
 import { SLASH_COMMANDS, argLabel, argSuggestions, complete, leadingMention, parseSlash, slashSuggestions, type SlashAction } from '../slash.js';
@@ -98,7 +98,13 @@ export function App({ store, cwd, initial, onQuit, openUrl, size }: AppProps) {
   const models: Partial<Record<AgentId, AgentModelChoice>> = { ...(st.settings?.models ?? {}), ...(cfg.models ?? {}) };
   const developer: AgentId = cfg.developer ?? st.settings?.developer ?? 'codex';
   const mode = cfg.mode ?? st.settings?.defaultMode;
-  const agents: Record<AgentId, AgentView> = view?.agents ?? { codex: idleAgent(), claude: idleAgent() };
+  // The two side panels show this session's developer and reviewer, whoever they are.
+  const primaryAgent: AgentId = mode === 'custom' && cfg.team ? cfg.team.developer : developer;
+  const configuredReviewer: AgentId = mode === 'custom' && cfg.team
+    ? (cfg.team.reviewers[0] ?? peerOf(primaryAgent))
+    : (cfg.reviewer ?? peerOf(primaryAgent));
+  const secondAgent: AgentId = configuredReviewer === primaryAgent ? peerOf(primaryAgent) : configuredReviewer;
+  const agents: Record<AgentId, AgentView> = view?.agents ?? byAgent(() => idleAgent());
   const anyActive = AGENT_IDS.some((a) => isActive(agents[a].status));
   const hasStreams = !!view && Object.keys(view.streams).length > 0;
   const { frame } = useAnimation({ interval: 100, isActive: anyActive || hasStreams || !!st.busy || st.conn === 'connecting' });
@@ -112,7 +118,7 @@ export function App({ store, cwd, initial, onQuit, openUrl, size }: AppProps) {
 
   let banner: string | null = null;
   if (confirm === 'cancel') banner = bg(C.warn)(fg(C.ink)(bold(' Cancel the running turn? '))) + '  ' + bold(fg(C.ok)('y')) + dim(' yes  ') + bold(fg(C.err)('n')) + dim(' no  · Ctrl+C again quits (agents keep working)');
-  else if (status === 'awaiting_approval' && session?.config.mode === 'compete' && !session.chosenVariant) banner = bold(fg(C.lina)('◆ Pick the winner')) + dim(' — ') + fg(C.lina)('/choose') + dim(' codex|claude · ') + fg(C.ok)('/approve') + dim(' <agent> [squash|merge|branch] · ') + fg(C.text)('/diff codex|claude') + dim(' compares · ') + fg(C.err)('/reject');
+  else if (status === 'awaiting_approval' && session?.config.mode === 'compete' && !session.chosenVariant) banner = bold(fg(C.lina)('◆ Pick the winner')) + dim(' — ') + fg(C.lina)('/choose') + dim(` ${AGENT_IDS.join('|')} · `) + fg(C.ok)('/approve') + dim(' <agent> [squash|merge|branch] · ') + fg(C.text)('/diff <agent>') + dim(' compares · ') + fg(C.err)('/reject');
   else if (status === 'awaiting_approval') banner = bold(fg(C.lina)('◆ Awaiting your approval')) + dim(' — ') + fg(C.ok)('/approve') + dim(' [squash|merge|branch] · ') + fg(C.err)('/reject') + dim(' · or type a message to request changes');
   else if (running) banner = fg(C.ok)('● ') + dim('Agents are working — messages are queued for the next turn boundary · ') + fg(C.text)('/interrupt <msg>') + dim(' cuts in · Ctrl+P pause') + (session && session.pendingMessages > 0 ? fg(C.warn)(` · ${session.pendingMessages} queued`) : '');
   else if (session?.goalResumeQueued) banner = fg(C.info)('◌ Goal queued') + dim(' — continues automatically when the project is available');
@@ -128,6 +134,18 @@ export function App({ store, cwd, initial, onQuit, openUrl, size }: AppProps) {
   suggestionLines = Math.min(suggestionLines, Math.max(0, rows - 3 - comp.lines.length - (rows < 10 ? 1 : 2) - 1 - (banner ? 1 : 0) - 1));
   const layout = computeLayout({ columns, rows, composerLines: comp.lines.length, suggestionLines, bannerLines: banner ? 1 : 0 });
   const mainHeight = layout.wide ? layout.transcriptHeight : layout.transcriptHeight + layout.compactRowHeight;
+  // Live panels: every agent of a parallel team, else the session's developer and reviewer.
+  const panelAgents: AgentId[] = mode === 'parallel' && cfg.participants?.length
+    ? [...new Set([cfg.developer ?? developer, ...cfg.participants])]
+    : mode === 'custom' && cfg.team
+      ? [...new Set([cfg.team.developer, cfg.team.planner, cfg.team.planCritic, ...cfg.team.reviewers].filter((a): a is AgentId => !!a))]
+      : [primaryAgent, secondAgent];
+  const panelHeights = panelAgents.map((_, i) => i === panelAgents.length - 1
+    ? mainHeight - Math.floor(mainHeight / panelAgents.length) * (panelAgents.length - 1)
+    : Math.floor(mainHeight / panelAgents.length));
+  const panelWidths = panelAgents.map((_, i) => i === panelAgents.length - 1
+    ? columns - Math.floor(columns / panelAgents.length) * (panelAgents.length - 1)
+    : Math.floor(columns / panelAgents.length));
 
   // ── transcript ──
   const cursorOn = frame % 8 < 5;
@@ -200,7 +218,7 @@ export function App({ store, cwd, initial, onQuit, openUrl, size }: AppProps) {
       case 'send': {
         const m = leadingMention(a.text);
         void store.sendMessage(a.text);
-        if (m && !view) store.notice('info', `Starting a session and asking ${m === 'codex' ? 'Codex' : 'Claude'}…`);
+        if (m && !view) store.notice('info', `Starting a session and asking ${AGENT_NAME[m]}…`);
         break;
       }
       case 'goal': void store.goal(a.objective); break;
@@ -292,10 +310,14 @@ export function App({ store, cwd, initial, onQuit, openUrl, size }: AppProps) {
     }
     if (overlay) return;
     if (layout.wide && event.x > columns - layout.sideWidth && event.y >= 4 && event.y < 4 + mainHeight) {
-      setLiveAgent(event.y < 4 + layout.panelHeight ? 'codex' : 'claude'); setOverlay('live'); return;
+      let top = 4;
+      const i = Math.max(0, panelHeights.findIndex((hgt) => event.y < (top += hgt)));
+      setLiveAgent(panelAgents[Math.min(i, panelAgents.length - 1)]); setOverlay('live'); return;
     }
     if (!layout.wide && layout.compactRowHeight > 0 && event.y >= 4 + layout.transcriptHeight && event.y < 4 + mainHeight) {
-      setLiveAgent(event.x <= Math.floor(columns / 2) ? 'codex' : 'claude'); setOverlay('live'); return;
+      let left = 0;
+      const i = Math.max(0, panelWidths.findIndex((w) => event.x < (left += w)));
+      setLiveAgent(panelAgents[Math.min(i, panelAgents.length - 1)]); setOverlay('live'); return;
     }
 
     if (event.y === layout.rows) {
@@ -478,8 +500,7 @@ export function App({ store, cwd, initial, onQuit, openUrl, size }: AppProps) {
     <Box flexDirection="row" height={mainHeight}>
       {transcriptBox}
       <Box flexDirection="column" width={layout.sideWidth}>
-        {panel('codex', layout.sideWidth, layout.panelHeight)}
-        {panel('claude', layout.sideWidth, mainHeight - layout.panelHeight)}
+        {panelAgents.map((a, i) => panel(a, layout.sideWidth, panelHeights[i]))}
       </Box>
     </Box>
   ) : (
@@ -487,8 +508,7 @@ export function App({ store, cwd, initial, onQuit, openUrl, size }: AppProps) {
       {transcriptBox}
       {layout.compactRowHeight > 0 ? (
         <Box flexDirection="row" height={layout.compactRowHeight}>
-          {panel('codex', Math.floor(columns / 2), layout.compactRowHeight, true)}
-          {panel('claude', columns - Math.floor(columns / 2), layout.compactRowHeight, true)}
+          {panelAgents.map((a, i) => panel(a, panelWidths[i], layout.compactRowHeight, true))}
         </Box>
       ) : null}
     </Box>
@@ -504,11 +524,12 @@ export function App({ store, cwd, initial, onQuit, openUrl, size }: AppProps) {
       return sel ? bg('#2E2645')(padAnsi(full, columns - 2)) : full;
     });
   } else if (argSugs.length) sugLines = [' ' + argSugs.map((a, i) => (i === 0 ? fg(C.lina)(argLabel(a)) : dim(argLabel(a)))).join(dim(' · ')) + dim('   Tab to complete')];
-  else if (mentionTyping) sugLines = [' ' + fg(C.codex)('@codex') + dim(' · ') + fg(C.claude)('@claude') + dim('   Tab to complete — asks that agent directly')];
+  else if (mentionTyping) sugLines = [' ' + AGENT_IDS.map((a) => fg(actorColor(a))('@' + a)).join(dim(' · ')) + dim('   Tab to complete — asks that agent directly')];
 
   const mention = leadingMention(ed.value);
   const composerColor = overlay ? C.faint : mention ? actorColor(mention) : C.lina;
-  const placeholder = !ed.value ? dim(view ? (running ? ' Message the team (queued for the next turn)…  / for commands' : ' Reply, ask @codex / @claude, or / for commands') : ' Describe what to build…  @codex/@claude to ask one agent · / for commands') : '';
+  const mentions = AGENT_IDS.map((a) => '@' + a).join(' / ');
+  const placeholder = !ed.value ? dim(view ? (running ? ' Message the team (queued for the next turn)…  / for commands' : ` Reply, ask ${mentions}, or / for commands`) : ` Describe what to build…  ${mentions} to ask one agent · / for commands`) : '';
   const composerLines = comp.lines.map((line, index) => (index === 0 ? fg(composerColor)('❯ ') : '  ') + line + (index === 0 && placeholder ? placeholder : ''));
 
   let footerLeft: string;

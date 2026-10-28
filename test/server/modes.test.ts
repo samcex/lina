@@ -154,8 +154,8 @@ describe('parallel mode', () => {
     ]);
     const claudePart = parts.find((c) => c.agent === 'claude')!;
     expect(claudePart.prompt).toContain('Your part: **Farewell**');
-    expect(claudePart.prompt).toContain('The other part, built by codex');
-    expect(claudePart.prompt).toContain('Do NOT edit files the other part owns');
+    expect(claudePart.prompt).toContain('- codex: **Greeting**');
+    expect(claudePart.prompt).toContain('Do NOT edit files another part owns');
     expect(claudePart.prompt).toContain('Request from the project owner');
     expect(ofType(evs, 'checkpoint').filter((c) => c.data.variant).map((c) => c.data.variant).sort()).toEqual(['claude', 'codex']);
     const integ = ofType(evs, 'integration');

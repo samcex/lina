@@ -1,7 +1,5 @@
 // EventStore: append-only per-session event log + live fan-out + LiveState.
-import type {
-  Actor, AgentId, AnyLinaEvent, EventDataMap, EventType, LinaEvent, LiveState, Session,
-} from '../shared/types.js';
+import { byAgent, type Actor, type AgentId, type AnyLinaEvent, type EventDataMap, type EventType, type LinaEvent, type LiveState, type Session } from '../shared/types.js';
 import type { Db } from './db.js';
 import { redact, tail } from './agents/redact.js';
 import { log } from './log.js';
@@ -13,7 +11,7 @@ const ACTIVITY_OUTPUT_MAX = 4096;
 function emptyLive(): LiveState {
   const t = Date.now();
   return {
-    agents: { codex: { status: 'idle', since: t }, claude: { status: 'idle', since: t } },
+    agents: byAgent(() => ({ status: 'idle' as const, since: t })),
     streams: {},
     rateLimits: {},
   };

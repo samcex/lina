@@ -1,6 +1,6 @@
 // LINA terminal visual identity. Hex colors are used both through Ink's color
 // props (chalk degrades them) and through our own ANSI helpers (ansi.ts degrades).
-import type { Actor, ActivityKind, AgentId, Severity } from '../shared/types.js';
+import { AGENT_LABEL, type Actor, type ActivityKind, type AgentId, type Severity } from '../shared/types.js';
 
 export const C = {
   lina: '#A78BFA',
@@ -12,6 +12,9 @@ export const C = {
   claude: '#FB923C',
   claudeDim: '#9A4A1F',
   claudeSoft: '#FDBA74',
+  freebuff: '#A3E635',
+  freebuffDim: '#4D7C0F',
+  freebuffSoft: '#D9F99D',
   user: '#F4F4F5',
   text: '#E4E4E7',
   muted: '#8B8B96',
@@ -29,19 +32,20 @@ export const C = {
   ink: '#18181B',
 } as const;
 
-export const AGENT_NAME: Record<AgentId, string> = { codex: 'Codex', claude: 'Claude' };
+export const AGENT_NAME: Record<AgentId, string> = AGENT_LABEL;
 
 export function actorColor(a: Actor | 'lina'): string {
   switch (a) {
     case 'codex': return C.codex;
     case 'claude': return C.claude;
+    case 'freebuff': return C.freebuff;
     case 'lina': return C.lina;
     default: return C.user;
   }
 }
 
 export function actorDim(a: Actor): string {
-  return a === 'codex' ? C.codexDim : a === 'claude' ? C.claudeDim : a === 'lina' ? C.linaDeep : C.faint;
+  return a === 'codex' ? C.codexDim : a === 'claude' ? C.claudeDim : a === 'freebuff' ? C.freebuffDim : a === 'lina' ? C.linaDeep : C.faint;
 }
 
 export function actorName(a: Actor): string {

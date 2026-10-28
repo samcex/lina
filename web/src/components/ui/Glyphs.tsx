@@ -1,8 +1,9 @@
 // Original identity marks. Geometric, not company logos:
-//  Codex  → "facet": a crystalline hexagon with a cut (glacier)
-//  Claude → "ember": a disc rising over a horizon line (warm)
-//  LINA   → "orbit": a violet core with the two agents in orbit
-//  You    → "pearl": a soft ring
+//  Codex    → "facet": a crystalline hexagon with a cut (glacier)
+//  Claude   → "ember": a disc rising over a horizon line (warm)
+//  Freebuff → "spark": a four-point glint on a base line (lime)
+//  LINA     → "orbit": a violet core with the agents in orbit
+//  You      → "pearl": a soft ring
 import type { Actor } from '@shared/types';
 import { cx } from '../../lib/format';
 
@@ -19,6 +20,7 @@ export function BrandMark({ size = 28, live = false, className }: { size?: numbe
         <ellipse cx="16" cy="16" rx="12" ry="5.2" fill="none" stroke="var(--iris)" strokeOpacity=".5" strokeWidth="1.4" transform="rotate(-30 16 16)" />
         <circle className="bm-codex" cx="5.6" cy="22" r="2.8" fill="var(--glacier)" />
         <circle className="bm-claude" cx="26.4" cy="10" r="2.8" fill="var(--ember)" />
+        <circle className="bm-freebuff" cx="16" cy="4.2" r="2.2" fill="var(--freebuff)" />
       </g>
       <path d="M16 11.2 20.8 16 16 20.8 11.2 16Z" fill="url(#bm-core)" />
     </svg>
@@ -44,6 +46,14 @@ export function Glyph({ actor, size = 16 }: { actor: Actor; size?: number }) {
           <circle cx="12" cy="4.4" r="1.3" fill="currentColor" fillOpacity=".7" />
         </svg>
       );
+    case 'freebuff':
+      return (
+        <svg {...common}>
+          <path d="M12 2.4c.9 4.4 2.6 6.1 7 7-4.4.9-6.1 2.6-7 7-.9-4.4-2.6-6.1-7-7 4.4-.9 6.1-2.6 7-7Z" fill="currentColor" fillOpacity=".22" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" />
+          <path d="M4.2 19.6h15.6" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeOpacity=".6" />
+          <circle cx="19.4" cy="19.6" r="1.3" fill="currentColor" />
+        </svg>
+      );
     case 'lina':
       return (
         <svg {...common}>
@@ -51,6 +61,7 @@ export function Glyph({ actor, size = 16 }: { actor: Actor; size?: number }) {
           <path d="M12 8.3 15.7 12 12 15.7 8.3 12Z" fill="currentColor" />
           <circle cx="3.7" cy="16.8" r="1.9" fill="var(--glacier)" />
           <circle cx="20.3" cy="7.2" r="1.9" fill="var(--ember)" />
+          <circle cx="16" cy="3.4" r="1.6" fill="var(--freebuff)" />
         </svg>
       );
     default:

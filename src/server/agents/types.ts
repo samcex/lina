@@ -27,6 +27,8 @@ export interface TurnOptions {
   images?: string[];
   /** Use the provider's OS-level sandbox for shell commands, if supported. */
   osSandbox?: boolean;
+  /** parallel: every agent sharing this task (one part each), developer first. */
+  participants?: AgentId[];
   signal: AbortSignal;
   turnTimeoutMs: number;
   idleTimeoutMs: number;

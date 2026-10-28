@@ -1,5 +1,5 @@
 import { viewFromSnapshot, type SessionView } from './reducer.js';
-import type { AgentId, AnyLinaEvent } from './types.js';
+import { AGENT_IDS, type AnyLinaEvent } from './types.js';
 
 /** Prepend persisted history without replaying old status over current live state. */
 export function prependHistory(view: SessionView, events: AnyLinaEvent[]): SessionView {
@@ -11,10 +11,10 @@ export function prependHistory(view: SessionView, events: AnyLinaEvent[]): Sessi
   const timeline = [...bySeq.values()].sort((a, b) => a.seq - b.seq);
   const rebuilt = viewFromSnapshot({
     session: view.session, project: view.project, events: timeline,
-    findings: view.findings, live: { agents: { codex: view.agents.codex, claude: view.agents.claude }, streams: {}, rateLimits: {} },
+    findings: view.findings, live: { agents: view.agents, streams: {}, rateLimits: {} },
   });
   const agents = { ...view.agents };
-  for (const id of ['codex', 'claude'] as AgentId[]) {
+  for (const id of AGENT_IDS) {
     const activity = new Map(rebuilt.agents[id].activity.map((a) => [a.key, a]));
     // Ephemeral activity may be newer than its last persisted update.
     for (const a of view.agents[id].activity) activity.set(a.key, a);

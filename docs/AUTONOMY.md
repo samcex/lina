@@ -92,3 +92,11 @@ Provider responses in this fault-injection check are mocks; it does not consume
 real provider quotas or certify a particular external project's feature claims.
 
 Scheduler availability errors retry after 30 seconds without disabling automation. Explicit session Pause still disables automatic retries until Resume; Pause and Resume requests are recorded in conversation history.
+
+## Delegating implementation to Freebuff
+
+Run `/delegate` before sending a task or goal. This selects a custom team: Codex plans, Claude critiques, Freebuff implements and addresses findings, and Codex plus Claude independently review the actual changes. `/goal` preserves this team. The equivalent explicit command is `/team plan=codex,critic=claude,dev=freebuff,review=codex+claude`.
+
+Freebuff is also tried after unavailable Codex and Claude providers when its CLI is installed. Reviews that cannot run remain scheduled; fallback self-review does not count as independent approval. Explicit Pause and Cancel still stop automatic continuation.
+
+Freebuff's interactive CLI uses its own configured model and permissions. LINA passes the full goal, plan, constraints and role instructions through its composer, reads structured persisted tool activity, and stops the process after the turn finishes. Tool activity appears under the Freebuff panel. The currently tested Freebuff CLI does not expose its own spawn_agents tool; LINA delegates to the Freebuff process itself, rather than claiming it spawned nested workers. Token usage and per-worker provider identities are not supplied by this CLI. It must already be installed and logged in (`lina doctor` checks it).

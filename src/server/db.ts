@@ -1,8 +1,6 @@
 // SQLite persistence (node:sqlite, synchronous). WAL mode, versioned migrations.
 import { DatabaseSync, type StatementSync } from 'node:sqlite';
-import type {
-  Actor, AgentId, AnyLinaEvent, Attachment, EventType, Project, SearchHit, Session, UsageTotals,
-} from '../shared/types.js';
+import { byAgent, emptyUsageTotals, type Actor, type AgentId, type AnyLinaEvent, type Attachment, type EventType, type Project, type SearchHit, type Session, type UsageTotals } from '../shared/types.js';
 
 const MIGRATIONS: string[] = [
   // v1
@@ -76,7 +74,7 @@ const MIGRATIONS: string[] = [
 
 type Row = Record<string, unknown>;
 
-const emptyUsage = (): UsageTotals => ({ inputTokens: 0, outputTokens: 0, cachedInputTokens: 0, costUsd: 0, turns: 0 });
+const emptyUsage = emptyUsageTotals;
 
 export class Db {
   readonly sql: DatabaseSync;
@@ -166,7 +164,7 @@ export class Db {
       round: Number(r.round), createdAt: Number(r.created_at), updatedAt: Number(r.updated_at),
       config: JSON.parse(String(r.config)),
       workspacePath: String(r.workspace_path), branch: String(r.branch), baseCommit: String(r.base_commit),
-      usage: { codex: { ...emptyUsage(), ...usage.codex }, claude: { ...emptyUsage(), ...usage.claude } },
+      usage: byAgent((a) => ({ ...emptyUsage(), ...usage[a] })),
       lastSeq: Number(r.last_seq), pendingMessages: Number(r.pending_messages),
     };
     if (r.head_commit) s.headCommit = String(r.head_commit);

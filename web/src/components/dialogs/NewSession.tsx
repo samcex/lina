@@ -25,12 +25,16 @@ export function NewSessionDialog() {
   const [prompt, setPrompt] = useState('');
   const [mode, setMode] = useState<Mode>('pair');
   const [developer, setDeveloper] = useState<AgentId>('codex');
+  /** parallel: let the third agent build a part too (all three work at once). */
+  const [thirdAgent, setThirdAgent] = useState(false);
   const [team, setTeam] = useState<TeamConfig>(() => defaultTeam('codex'));
   const [choice, setChoice] = useState<Record<AgentId, AgentModelChoice>>(DEFAULT_SETTINGS.models);
   const [advanced, setAdvanced] = useState(false);
   const [isolated, setIsolated] = useState(false);
   const [workflow, setWorkflow] = useState(false);
   const needsIsolation = mode === 'parallel' || mode === 'compete';
+  const spare: AgentId | undefined = AGENT_IDS.find((a) => a !== developer && a !== other(developer));
+  const parallelAgents: AgentId[] = [developer, other(developer), ...(thirdAgent && spare ? [spare] : [])];
   const [maxRounds, setMaxRounds] = useState(3);
   const [network, setNetwork] = useState(false);
   const [testCommand, setTestCommand] = useState('');
@@ -46,6 +50,7 @@ export function NewSessionDialog() {
     setWorkflow(false); setIsolated(false); setTitle(''); setPrompt(''); setError(null); setBusy(false); setAdvanced(false);
     setMode(proj?.settings.defaultMode && IMPLEMENTED_MODES.includes(proj.settings.defaultMode) ? proj.settings.defaultMode : settings.defaultMode);
     setDeveloper(settings.developer);
+    setThirdAgent(false);
     setTeam(settings.team ?? defaultTeam(settings.developer));
     setChoice(settings.models);
     setMaxRounds(proj?.settings.maxRounds ?? settings.maxRounds);
@@ -62,7 +67,7 @@ export function NewSessionDialog() {
       await lina.createSession({
         projectId, title: title.trim() || undefined, prompt: prompt.trim() || undefined,
         config: {
-          ...(mode === 'custom' ? configForTeam(team) : { mode, developer, reviewer: other(developer) }),
+          ...(mode === 'custom' ? configForTeam(team) : { mode, developer, reviewer: other(developer), ...(mode === 'parallel' && thirdAgent ? { participants: parallelAgents } : {}) }),
           workspaceMode: needsIsolation || isolated ? 'isolated' : 'direct',
           interactionMode: needsIsolation || isolated || workflow ? 'workflow' : 'chat',
           models: choice, maxRounds, network, ...(testCommand.trim() ? { testCommand: testCommand.trim() } : {}),
@@ -115,7 +120,7 @@ export function NewSessionDialog() {
           <div className="field">
             <span className="field-label">Team{mode === 'parallel' && <em>the first agent leads and splits the task</em>}</span>
             <div className="team">
-              {(mode === 'custom' ? AGENT_IDS : [developer, other(developer)]).map((a, i) => {
+              {(mode === 'custom' ? AGENT_IDS : parallelAgents).map((a, i) => {
                 const cfg = mode === 'custom' ? configForTeam(team) : { mode, developer, reviewer: other(developer) };
                 const r = roleLabel(a, cfg);
                 const swappable = i === 1 && mode !== 'custom' && mode !== 'compete';
@@ -133,6 +138,12 @@ export function NewSessionDialog() {
                 );
               })}
             </div>
+            {mode === 'parallel' && spare && (
+              <label className="check check-inline">
+                <input type="checkbox" checked={thirdAgent} onChange={(e) => setThirdAgent(e.target.checked)} /><span className="check-box" />
+                <span><b>Add {AGENT_NAME[spare]}</b> · a third agent splits and builds a part at the same time</span>
+              </label>
+            )}
             {mode === 'custom' && <TeamEditor team={team} onChange={setTeam} />}
           </div>
 

@@ -15,7 +15,7 @@ export function validateModelChoice(agent: string, c: unknown): AgentModelChoice
   if (!c || typeof c !== 'object') throw new LinaError(`Invalid model choice for ${agent}`, 'invalid');
   const m = (c as { model?: unknown }).model;
   const e = (c as { effort?: unknown }).effort;
-  if (typeof m !== 'string' || !m.trim()) throw new LinaError(`Model for ${agent} must be a non-empty string`, 'invalid');
+  if (typeof m !== 'string' || !m.trim() || m.trim().startsWith('/')) throw new LinaError(`Model for ${agent} must be a model ID, not a slash command`, 'invalid');
   if (e !== undefined && e !== null && !(EFFORTS as unknown[]).includes(e)) throw new LinaError(`Invalid effort for ${agent}: ${String(e)}`, 'invalid');
   return e ? { model: m.trim(), effort: e as Effort } : { model: m.trim() };
 }
@@ -63,6 +63,7 @@ export function getSettings(db: Db): Settings {
     models: {
       codex: { ...DEFAULT_SETTINGS.models.codex, ...stored.models?.codex },
       claude: { ...DEFAULT_SETTINGS.models.claude, ...stored.models?.claude },
+      freebuff: { ...DEFAULT_SETTINGS.models.freebuff, ...stored.models?.freebuff },
     },
   };
 }

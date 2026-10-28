@@ -277,11 +277,11 @@ export function competeFixture(): SessionSnapshot {
   const session = baseSession(sid, 'prj_atlas', 'CSV export for invoices', {
     status: 'awaiting_approval', phase: 'awaiting_approval', round: 2, lastSeq: list.length, branch: 'lina/c0mp3t', baseCommit: '5be12a90c4',
     updatedAt: Date.now() - 4 * MIN, createdAt: T0 + 6 * MIN,
-    config: { mode: 'compete', developer: 'codex', reviewer: 'claude', models: { codex: { model: 'gpt-6.1-sol', effort: 'high' }, claude: { model: 'opus' } }, maxRounds: 3, network: false },
-    usage: { codex: codexUsage, claude: claudeUsage },
+    config: { mode: 'compete', developer: 'codex', reviewer: 'claude', models: { codex: { model: 'gpt-6.1-sol', effort: 'high' }, claude: { model: 'opus' }, freebuff: { model: 'auto' } }, maxRounds: 3, network: false },
+    usage: { codex: codexUsage, claude: claudeUsage, freebuff: usage(0, 0, 0, 0, 0) },
     variants: {
-      codex: { agent: 'codex', branch: 'lina/c0mp3t-codex', workspacePath: '/home/developer/.lina/workspaces/ses_compete--codex', baseCommit: '5be12a90c4', headCommit: 'd41e7a0b93' },
-      claude: { agent: 'claude', branch: 'lina/c0mp3t-claude', workspacePath: '/home/developer/.lina/workspaces/ses_compete--claude', baseCommit: '5be12a90c4', headCommit: '8a2f6c1e57' },
+      codex: { agent: 'codex', branch: 'lina/c0mp3t-codex', workspacePath: '/home/sam/.lina/workspaces/ses_compete--codex', baseCommit: '5be12a90c4', headCommit: 'd41e7a0b93' },
+      claude: { agent: 'claude', branch: 'lina/c0mp3t-claude', workspacePath: '/home/sam/.lina/workspaces/ses_compete--claude', baseCommit: '5be12a90c4', headCommit: '8a2f6c1e57' },
     },
   });
   return {
@@ -290,6 +290,7 @@ export function competeFixture(): SessionSnapshot {
       agents: {
         codex: { status: 'done', role: 'reviewer', since: Date.now() - 5 * MIN, model: 'gpt-6.1-sol' },
         claude: { status: 'done', role: 'reviewer', since: Date.now() - 5 * MIN, model: 'claude-opus-5-5' },
+        freebuff: { status: 'idle', since: Date.now() - 5 * MIN },
       },
       streams: {}, rateLimits: {},
     },
@@ -550,11 +551,11 @@ export function parallelFixture(): SessionSnapshot {
   const session = baseSession(sid, 'prj_lumen', 'Team seats: API + settings page', {
     status: 'running', phase: 'reviewing', round: 2, lastSeq: list.length, branch: 'lina/p4r411', baseCommit: '0c7a9e3b55', headCommit: 'a83c5f2e61',
     updatedAt: Date.now() - 15_000, createdAt: T0 + 14 * MIN,
-    config: { mode: 'parallel', developer: 'codex', reviewer: 'claude', models: { codex: { model: 'gpt-6.1-sol', effort: 'medium' }, claude: { model: 'opus' } }, maxRounds: 3, network: false },
-    usage: { codex: usage(388_000, 19_200, 270_000, 2.64, 5), claude: usage(244_300, 15_700, 160_100, 1.98, 3) },
+    config: { mode: 'parallel', developer: 'codex', reviewer: 'claude', models: { codex: { model: 'gpt-6.1-sol', effort: 'medium' }, claude: { model: 'opus' }, freebuff: { model: 'auto' } }, maxRounds: 3, network: false },
+    usage: { codex: usage(388_000, 19_200, 270_000, 2.64, 5), claude: usage(244_300, 15_700, 160_100, 1.98, 3), freebuff: usage(0, 0, 0, 0, 0) },
     variants: {
-      codex: { agent: 'codex', branch: 'lina/p4r411-codex', workspacePath: '/home/developer/.lina/workspaces/ses_parallel--codex', baseCommit: '0c7a9e3b55', headCommit: '61af0c9d24', part: parts[0] },
-      claude: { agent: 'claude', branch: 'lina/p4r411-claude', workspacePath: '/home/developer/.lina/workspaces/ses_parallel--claude', baseCommit: '0c7a9e3b55', headCommit: 'f0b83e5a17', part: parts[1] },
+      codex: { agent: 'codex', branch: 'lina/p4r411-codex', workspacePath: '/home/sam/.lina/workspaces/ses_parallel--codex', baseCommit: '0c7a9e3b55', headCommit: '61af0c9d24', part: parts[0] },
+      claude: { agent: 'claude', branch: 'lina/p4r411-claude', workspacePath: '/home/sam/.lina/workspaces/ses_parallel--claude', baseCommit: '0c7a9e3b55', headCommit: 'f0b83e5a17', part: parts[1] },
     },
   });
   return {
@@ -563,6 +564,7 @@ export function parallelFixture(): SessionSnapshot {
       agents: {
         codex: { status: 'reviewing', detail: 'src/components/SeatTable.tsx', role: 'reviewer', since: Date.now() - 41_000, model: 'gpt-6.1-sol' },
         claude: { status: 'reading', detail: 'src/api/seats.ts', role: 'reviewer', since: Date.now() - 23_000, model: 'claude-opus-5-5' },
+        freebuff: { status: 'idle', since: Date.now() - 41_000 },
       },
       streams: {}, rateLimits: {},
     },
@@ -656,11 +658,11 @@ export function customFixture(): SessionSnapshot {
   const session = baseSession(sid, 'prj_tide', 'Retry with backoff for `tide sync`', {
     status: 'awaiting_approval', phase: 'awaiting_approval', round: 2, lastSeq: list.length, branch: 'lina/cu5t0m', headCommit: '9e21a4f0bb',
     updatedAt: Date.now() - 9 * MIN, createdAt: T0 + 22 * MIN,
-    config: { mode: 'custom', developer: 'codex', reviewer: 'claude', team, models: { codex: { model: 'gpt-6.1-sol', effort: 'medium' }, claude: { model: 'opus' } }, maxRounds: 3, network: false },
-    usage: { codex: usage(198_000, 9_300, 140_000, 1.31, 4), claude: usage(121_500, 6_100, 88_000, 0.92, 3) },
+    config: { mode: 'custom', developer: 'codex', reviewer: 'claude', team, models: { codex: { model: 'gpt-6.1-sol', effort: 'medium' }, claude: { model: 'opus' }, freebuff: { model: 'auto' } }, maxRounds: 3, network: false },
+    usage: { codex: usage(198_000, 9_300, 140_000, 1.31, 4), claude: usage(121_500, 6_100, 88_000, 0.92, 3), freebuff: usage(0, 0, 0, 0, 0) },
   });
   return {
     session, project: PROJECTS[2], events: list, findings: fin,
-    live: { agents: { codex: { status: 'idle', since: Date.now() - 9 * MIN, model: 'gpt-6.1-sol' }, claude: { status: 'idle', since: Date.now() - 9 * MIN, model: 'claude-opus-5-5' } }, streams: {}, rateLimits: {} },
+    live: { agents: { codex: { status: 'idle', since: Date.now() - 9 * MIN, model: 'gpt-6.1-sol' }, claude: { status: 'idle', since: Date.now() - 9 * MIN, model: 'claude-opus-5-5' }, freebuff: { status: 'idle', since: Date.now() - 9 * MIN } }, streams: {}, rateLimits: {} },
   };
 }

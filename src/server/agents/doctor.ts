@@ -9,6 +9,7 @@ import { agentEnv, execText, runProcess, which } from './proc.js';
 import { classifyError } from './errors.js';
 import { redact } from './redact.js';
 import { CLAUDE_ISOLATION_ARGS, CLAUDE_SANDBOX_SETTINGS, createClaudeParser } from './claude.js';
+import { freebuffBin, freebuffConfigDir, freebuffLoggedIn, readFreebuffSettings } from './freebuff.js';
 
 export interface SandboxProbe { ok: boolean; checkedAt: number; error?: string; /** ErrorCode of the failure ('sandbox' = bwrap/seccomp itself failed). */ code?: string }
 export interface SandboxStatus { claude?: SandboxProbe; codex?: SandboxProbe; /** LINA's own bubblewrap sandbox for test runs. */ tests?: SandboxProbe }
@@ -101,6 +102,26 @@ async function claudeChecks(): Promise<DoctorCheck[]> {
   } else {
     out.push({ id: 'claude-auth', label: 'Claude Code logged in', ok: false, detail: scrubEmail(redact(firstLine(s.stderr || s.stdout))) || 'could not read `claude auth status`', hint: 'Run `claude auth login`.' });
   }
+  return out;
+}
+
+/** Freebuff is a TUI with no headless mode; the check is install + login + which chat mode it runs in. */
+async function freebuffChecks(): Promise<DoctorCheck[]> {
+  const bin = freebuffBin();
+  const path = await which(bin);
+  if (!path) return [{ id: 'freebuff', label: 'Freebuff CLI installed', ok: false, detail: 'freebuff not found on PATH', hint: 'Install with `npm install -g freebuff`.' }];
+  const v = await execText(bin, ['--version'], { timeoutMs: 15_000 });
+  const out: DoctorCheck[] = [{ id: 'freebuff', label: 'Freebuff CLI installed', ok: v.code === 0, detail: `${firstLine(v.stdout) || 'unknown version'} (${path})` }];
+  const loggedIn = freebuffLoggedIn();
+  out.push(loggedIn
+    ? { id: 'freebuff-auth', label: 'Freebuff logged in', ok: true, detail: freebuffConfigDir() }
+    : { id: 'freebuff-auth', label: 'Freebuff logged in', ok: false, detail: 'no credentials.json', hint: 'Run `freebuff login` in a terminal on this machine.' });
+  const s = readFreebuffSettings();
+  out.push({
+    id: 'freebuff-headless', label: 'Freebuff runs through a terminal', ok: true, warn: true,
+    detail: `interactive TUI (${s.mode ?? 'unknown'} mode${s.model ? `, ${s.model}` : ''}); no headless/JSON mode`,
+    hint: 'LINA drives the TUI in a pseudo-terminal and reads freebuff\'s own chat log. Token usage is unavailable, model choice is the CLI\'s (/model), and reviewer turns cannot be sandboxed read-only.',
+  });
   return out;
 }
 
@@ -212,8 +233,8 @@ function probeHint(p: SandboxProbe): string {
 
 export const runDoctor: RunDoctor = async (opts) => {
   const checks: DoctorCheck[] = [nodeCheck()];
-  const [git, codex, claude, path] = await Promise.all([gitChecks(), codexChecks(), claudeChecks(), pathCheck()]);
-  checks.push(...git, ...codex, ...claude, dataDirCheck(), path);
+  const [git, codex, claude, freebuff, path] = await Promise.all([gitChecks(), codexChecks(), claudeChecks(), freebuffChecks(), pathCheck()]);
+  checks.push(...git, ...codex, ...claude, ...freebuff, dataDirCheck(), path);
   const tests = await probeTests();
   checks.push({
     id: 'test-sandbox', label: 'Test sandbox (bubblewrap) works', ok: tests.ok, ...(tests.ok ? {} : { warn: true }),

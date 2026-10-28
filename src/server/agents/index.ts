@@ -26,5 +26,9 @@ export async function getAdapter(agent: AgentId, opts: { mock?: boolean; session
     const { CodexAdapter } = await import('./codex.js');
     return new CodexAdapter();
   }
+  if (agent === 'freebuff') {
+    const { FreebuffAdapter } = await import('./freebuff.js');
+    return new FreebuffAdapter();
+  }
   throw new Error(`Unknown agent: ${String(agent)}`);
 }

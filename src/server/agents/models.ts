@@ -9,6 +9,7 @@ import { agentEnv, execText, runProcess, which } from './proc.js';
 import { classifyError } from './errors.js';
 import { createCodexParser, codexIsolationArgs } from './codex.js';
 import { CLAUDE_ISOLATION_ARGS } from './claude.js';
+import { discoverFreebuffModels, validateFreebuffModel } from './freebuff.js';
 
 const EFFORTS: Effort[] = ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'];
 const DISCOVERY_TTL_MS = 10 * 60_000;
@@ -75,7 +76,7 @@ export const discoverModels: DiscoverModels = async (agent, opts) => {
   let value: AgentModels;
   if (!opts?.refresh && cached && Date.now() - cached.at < DISCOVERY_TTL_MS) value = cached.value;
   else {
-    value = agent === 'codex' ? await discoverCodex() : await discoverClaude();
+    value = agent === 'codex' ? await discoverCodex() : agent === 'freebuff' ? await discoverFreebuffModels() : await discoverClaude();
     discoveryCache.set(agent, { at: Date.now(), value });
   }
   return attachValidations(value);
@@ -220,7 +221,9 @@ export const validateModel: ValidateModel = async (agent, model) => {
   const dir = mkdtempSync(join(tmpdir(), 'lina-validate-'));
   let v: ModelValidation;
   try {
-    v = agent === 'claude' ? await validateClaude(model, dir) : await validateCodex(model, dir);
+    v = agent === 'claude' ? await validateClaude(model, dir)
+      : agent === 'freebuff' ? await validateFreebuffModel(model)
+      : await validateCodex(model, dir);
   } catch (e: any) {
     v = { ok: false, checkedAt: Date.now(), error: String(e?.message ?? e), code: 'internal' };
   } finally {

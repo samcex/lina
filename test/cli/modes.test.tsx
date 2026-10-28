@@ -4,7 +4,7 @@ import { render, renderToString } from 'ink';
 import { PassThrough, Writable } from 'node:stream';
 import { LinaApiError } from '../../src/shared/client.js';
 import { viewFromSnapshot } from '../../src/shared/reducer.js';
-import type { AnyLinaEvent, Candidate, Finding, Session, SessionSnapshot, TestRun } from '../../src/shared/types.js';
+import { AGENT_IDS, type AnyLinaEvent, type Candidate, type Finding, type Session, type SessionSnapshot, type TestRun } from '../../src/shared/types.js';
 import { stripAnsi } from '../../src/cli/ansi.js';
 import { buildTranscript, candidateComparison, renderEvent } from '../../src/cli/transcript.js';
 import { agentScopes, headerLines, pipelineRail, railFor } from '../../src/cli/tui/chrome.js';
@@ -53,7 +53,7 @@ function competeSnapshot(over: Partial<Session> = {}): SessionSnapshot {
   ];
   return {
     session: s, project, events, findings: competeFindings,
-    live: { agents: { codex: { status: 'idle', since: T0 }, claude: { status: 'idle', since: T0 } }, streams: {}, rateLimits: {} },
+    live: { agents: { codex: { status: 'idle', since: T0 }, claude: { status: 'idle', since: T0 }, freebuff: { status: 'idle', since: T0 } }, streams: {}, rateLimits: {} },
   };
 }
 
@@ -85,7 +85,7 @@ function stubClient(calls: { name: string; args: unknown[] }[], over: Partial<Re
 describe('transcript: modes v2', () => {
   it('renders the parallel split with each part, scope and files', () => {
     const out = text(renderEvent(parallelEvents()[0], 100, { mode: 'parallel', lead: 'codex' }));
-    for (const s of ['⑂ Task split by Codex (lead) · 2 parts', 'CODEX', 'API endpoints', 'Add /api/limits and the persistence layer.', 'files src/api/limits.ts, src/db.ts', 'CLAUDE', 'Settings page', 'web/Settings.tsx']) expect(out).toContain(s);
+    for (const s of ['⑂ Task split by Codex (lead) · 2 parts', 'CODEX', 'API endpoints', 'Add /api/limits and the persistence layer.', 'files src/api/limits.ts, src/db.ts', 'CLAUDE', 'Settings page', 'web/Settings.tsx', 'cross-review by Claude', 'cross-review by Codex']) expect(out).toContain(s);
   });
   it('renders every integration state', () => {
     const [, conflict, resolved, merged, failed] = parallelEvents();
@@ -257,8 +257,8 @@ describe('store: compete approval flow', () => {
     const n = store.getState().notices.at(-1)!;
     expect(n.level).toBe('error');
     expect(n.text).toContain('Pick a winner first');
-    expect(n.hint).toContain('/choose codex|claude');
-    expect(n.hint).toContain('/approve codex|claude [squash|merge|branch]');
+    expect(n.hint).toContain(`/choose ${AGENT_IDS.join('|')}`);
+    expect(n.hint).toContain(`/approve ${AGENT_IDS.join('|')} [squash|merge|branch]`);
   });
   it('variant picks are refused outside compete', async () => {
     const { store, approvals } = setup({ config: { ...competeSession.config, mode: 'pair' } });
@@ -293,7 +293,7 @@ describe('store: compete approval flow', () => {
 describe('App: compete screen', () => {
   it('shows the pick-the-winner banner and both agents working concurrently', () => {
     const snap = competeSnapshot();
-    snap.live.agents = { codex: { status: 'reviewing', role: 'reviewer', since: T0 }, claude: { status: 'writing', role: 'developer', since: T0, detail: 'src/limit.ts' } };
+    snap.live.agents = { ...snap.live.agents, codex: { status: 'reviewing', role: 'reviewer', since: T0 }, claude: { status: 'writing', role: 'developer', since: T0, detail: 'src/limit.ts' } };
     const store = new TuiStore(stubClient([]), { view: viewFromSnapshot(snap), live: false, project });
     const out = stripAnsi(renderToString(<App store={store} cwd="/tmp" onQuit={() => {}} size={{ columns: 150, rows: 60 }} />, { columns: 150 }));
     for (const s of ['◆ Pick the winner — /choose codex|claude', 'CODEX  c0dec0d', 'Reviewer · Claude\'s v', 'Developer · own version', 'Reviewing', 'Writing code', 'claude opus rival']) expect(out).toContain(s);

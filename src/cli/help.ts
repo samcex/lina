@@ -1,5 +1,5 @@
 import { MODE_DESCRIPTION, MODE_LABEL } from '../shared/reducer.js';
-import { LINA_VERSION } from '../shared/types.js';
+import { AGENT_IDS, AGENT_LABEL, LINA_VERSION } from '../shared/types.js';
 import { bold, dim, fg, padAnsi, wrapAnsi } from './ansi.js';
 import { CLI_MODES } from './args.js';
 import { TEAM_SPEC_EXAMPLE } from './team.js';
@@ -20,7 +20,7 @@ export function helpText(): string {
   const h = (s: string) => bold(fg(C.lina)(s));
   const c = (s: string) => fg(C.codex)(s);
   const k = (s: string) => fg(C.claudeSoft)(s);
-  return `${bold(fg(C.lina)('◆ LINA'))} ${dim(`v${LINA_VERSION}`)} — Codex + Claude Code, working as one team
+  return `${bold(fg(C.lina)('◆ LINA'))} ${dim(`v${LINA_VERSION}`)} — ${AGENT_LABEL.codex} + ${AGENT_LABEL.claude} + ${AGENT_LABEL.freebuff}, working as one team
 
 ${h('Usage')}
   ${c('lina')}                              Open the interactive terminal UI for this project
@@ -43,8 +43,9 @@ ${h('Usage')}
   ${c('lina ui --url')}                     Print the access URL without opening a browser
   ${c('lina ui --qr')}                      Print the access URL and a terminal QR code
   ${c('lina models')} [--refresh]           Show the models each agent can use
-  ${c('lina models validate')} <codex|claude> <model>     Probe a model with a tiny live request
-  ${c('lina models set')} <codex|claude> <model> [--effort low|medium|high|xhigh|max]
+  ${c('lina models validate')} <${AGENT_IDS.join('|')}> <model>
+                                    Probe a model with a tiny live request
+  ${c('lina models set')} <${AGENT_IDS.join('|')}> <model> [--effort low|medium|high|xhigh|max]
                                     Set the default model (and effort) for an agent
   ${c('lina settings')} [--json]          Show the defaults for new sessions (mode, team, sandboxes…)
   ${c('lina settings set')} <key> <value>   access (full|restricted) | rea (on|off) | mode | developer | max-rounds | team | test-sandbox | claude-sandbox
@@ -54,27 +55,31 @@ ${h('Usage')}
 
 ${h('Session options')} ${dim('(for lina, lina "<task>", lina attach)')}
   --project <path>        Use this registered project instead of the one containing $PWD
-  --developer codex|claude  Which agent implements (the lead in parallel); the other one reviews
+  --developer ${AGENT_IDS.join('|')}
+                          Which agent implements (the lead in parallel); another one reviews
   --workspace direct|isolated  Edit the project directly (default), or work separately and approve
   --interaction chat|workflow  Natural conversation (direct default), or the structured playbook
   --mode <mode>           pair | architect | solo | parallel | compete | custom (see Modes below)
+  --agents <list|all>     parallel: every agent builds one part at once, e.g.
+                          --agents ${AGENT_IDS.join(',')} (first one leads; implies --mode parallel)
   --team <spec>           custom mode: who plans, critiques, builds and reviews (implies --mode custom)
                           e.g. ${TEAM_SPEC_EXAMPLE}
-                          plan/critic: codex|claude|none · dev: codex|claude · review: codex, claude, codex+claude, none
+                          plan/critic: ${AGENT_IDS.join('|')}|none · dev: ${AGENT_IDS.join('|')} · review: one agent, two joined with +, or none
   --max-rounds N          Review rounds before escalating to you (1–20)
   --codex-model <id>      e.g. gpt-6.1-sol        --codex-effort low|medium|high|xhigh|max
   --claude-model <id>     e.g. opus, sonnet        --claude-effort low|medium|high|xhigh|max
-  --mock                  Scripted demo agents (no real Codex/Claude calls); badged in the UI
+                          (freebuff runs its own model — pick it inside the Freebuff CLI with /model)
+  --mock                  Scripted demo agents (no real agent calls); badged in the UI
   -h, --help              Show this help          -v, --version   Show the version
 
 ${h('Modes')}
 ${modeHelpLines(100).join('\n')}
 
 ${h('In the TUI')}
-  Enter send · Alt+Enter / Ctrl+J newline · ↑/↓ history · Tab completes ${k('@codex')} ${k('@claude')} and /commands
+  Enter send · Alt+Enter / Ctrl+J newline · ↑/↓ history · Tab completes ${AGENT_IDS.map((a) => k('@' + a)).join(' ')} and /commands
   /new /sessions /project /model /models /roles /mode /team /live /diff /changes /undo /preview /findings /tests /choose /approve /reject
   /goal [objective] · /pause /resume /cancel /retry /review /interrupt /ui /doctor /help /quit
-  Compete: /diff codex|claude compares the versions · /choose <agent> picks one · /approve <agent> [strategy] picks and applies
+  Compete: /diff <agent> compares the versions · /choose <agent> picks one · /approve <agent> [strategy] picks and applies
   Ctrl+C cancel turn (twice to quit) · Ctrl+P pause/resume · Ctrl+T live · Ctrl+D diff · Ctrl+F findings
   Ctrl+O web UI · Ctrl+L sessions · Wheel/PgUp/PgDn scroll · F1 or ? help · Esc close
 

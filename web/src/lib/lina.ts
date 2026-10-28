@@ -4,9 +4,7 @@ import { createContext, useContext } from 'react';
 import { applyEvent, viewFromSnapshot, type SessionView } from '@shared/reducer';
 import { prependHistory } from '@shared/history';
 import type { ServerMessage } from '@shared/protocol';
-import type {
-  AgentId, AnyLinaEvent, ApplyStrategy, Attachment, LiveState, Project, Session, SessionConfig, SessionSnapshot, Settings,
-} from '@shared/types';
+import { peerOf, type AgentId, type AnyLinaEvent, type ApplyStrategy, type Attachment, type LiveState, type Project, type Session, type SessionConfig, type SessionSnapshot, type Settings } from '@shared/types';
 import type { Backend, LiveLike } from './backend';
 import { Store, getStore, writeLocal, type AppState, type InspectorTab, type PendingMsg, type Toast, type UIState } from './store';
 import { writeSessionHash } from './auth';
@@ -351,7 +349,7 @@ export class Lina {
     try {
       this.acceptSession(await this.client.approval(id, { decision: 'choose', variant }));
       this.setUI({ worktree: null, diffRange: null });
-      const rival = variant === 'codex' ? 'claude' : 'codex';
+      const rival = peerOf(variant);
       this.toast({ tone: 'ok', title: `You chose ${cap(variant)}'s version`, detail: `Its commits are now the session branch. ${cap(rival)} reviews from here — approve when you're ready.` });
       return null;
     } catch (e) {

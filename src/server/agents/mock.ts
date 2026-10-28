@@ -91,12 +91,50 @@ test('says goodbye by name', () => {
 });
 `;
 
-export const MOCK_SPLIT = {
-  parts: [
-    { agent: 'codex', title: 'Greeting', scope: 'hello(name) with a node:test test', files: ['hello.js', 'hello.test.js'] },
-    { agent: 'claude', title: 'Farewell', scope: 'farewell(name) with a node:test test', files: ['farewell.js', 'farewell.test.js'] },
-  ],
-};
+const MATH = `'use strict';
+
+function double(n) {
+  return n * 2;
+}
+
+module.exports = { double };
+`;
+
+const MATH_TEST = `'use strict';
+const test = require('node:test');
+const assert = require('node:assert');
+const { double } = require('./math.js');
+
+test('doubles a number', () => {
+  assert.strictEqual(double(21), 42);
+});
+`;
+
+/**
+ * The scripted parallel split: one part per participating agent, in the order the runner passes them.
+ * Two agents keep the classic Greeting/Farewell pair; a third agent adds a math part.
+ */
+export function mockSplit(agents: AgentId[]) {
+  const stories = [
+    { title: 'Greeting', scope: 'hello(name) with a node:test test', module: 'hello', files: ['hello.js', 'hello.test.js'] },
+    { title: 'Farewell', scope: 'farewell(name) with a node:test test', module: 'farewell', files: ['farewell.js', 'farewell.test.js'] },
+    { title: 'Doubling', scope: 'double(n) with a node:test test', module: 'math', files: ['math.js', 'math.test.js'] },
+  ];
+  return {
+    parts: agents.map((agent, i) => ({ agent, ...stories[i % stories.length] })),
+  };
+}
+
+/** The scripted files for one part (indexed by the agent's position in the split). */
+function mockPart(agent: AgentId, agents: AgentId[]): { files: [string, string][]; module: string } {
+  const i = Math.max(0, agents.indexOf(agent));
+  const sets: { files: [string, string][]; module: string }[] = [
+    { files: [['hello.js', HELLO_V1], ['hello.test.js', TEST_V1]], module: 'hello' },
+    { files: [['farewell.js', FAREWELL], ['farewell.test.js', FAREWELL_TEST]], module: 'farewell' },
+    { files: [['math.js', MATH], ['math.test.js', MATH_TEST]], module: 'math' },
+  ];
+  return sets[i % sets.length];
+}
 
 const TEST_V2 = TEST_V1 + `
 test('rejects empty names', () => {
@@ -246,16 +284,22 @@ export class MockAdapter implements AgentAdapter {
         return this.review(round, opts, onEvent);
       case 'split': {
         await this.tool(s, onEvent, 'search', 'List project files');
-        const plan = 'Plan:\n- codex: `hello(name)` in `hello.js` with a test\n- claude: `farewell(name)` in `farewell.js` with a test\n- No shared files; each part runs its own tests';
+        const agents = opts.participants?.length ? opts.participants : ['codex', 'claude'] as AgentId[];
+        const split = mockSplit(agents);
+        const plan = ['Plan:', ...split.parts.map((p) => `- ${p.agent}: \`${p.scope}\``), '- No shared files; each part runs its own tests'].join('\n');
         if (this.scenario === 'nosplit') return plan;
-        return `${plan}\n\n\`\`\`lina-split\n${JSON.stringify(MOCK_SPLIT)}\n\`\`\``;
+        return `${plan}\n\n\`\`\`lina-split\n${JSON.stringify(split)}\n\`\`\``;
       }
-      case 'split_repair':
+      case 'split_repair': {
         if (this.scenario === 'nosplit') return 'Sorry, I cannot split this task.';
-        return `\`\`\`lina-split\n${JSON.stringify(MOCK_SPLIT)}\n\`\`\``;
+        const agents = opts.participants?.length ? opts.participants : ['codex', 'claude'] as AgentId[];
+        return `\`\`\`lina-split\n${JSON.stringify(mockSplit(agents))}\n\`\`\``;
+      }
       case 'part': {
-        const mine = this.id === 'codex' ? [['hello.js', HELLO_V1], ['hello.test.js', TEST_V1]] : [['farewell.js', FAREWELL], ['farewell.test.js', FAREWELL_TEST]];
-        if (this.scenario.startsWith('conflict')) mine.push(['index.js', `module.exports = { ...require('./${this.id === 'codex' ? 'hello' : 'farewell'}.js') };\n`]);
+        const agents = opts.participants?.length ? opts.participants : ['codex', 'claude'] as AgentId[];
+        const part = mockPart(this.id, agents);
+        const mine = [...part.files];
+        if (this.scenario.startsWith('conflict')) mine.push(['index.js', `module.exports = { ...require('./${part.module}.js') };\n`]);
         for (const [rel, content] of mine) await this.tool(s, onEvent, 'edit', `Write ${rel}`, { files: [rel] }, () => write(rel, content));
         await this.tool(s, onEvent, 'test', 'node --test', { output: '# pass 1\n# fail 0' });
         return `Implemented my part: ${mine.map(([r]) => `\`${r}\``).join(', ')}. Verified with \`node --test\`.`;

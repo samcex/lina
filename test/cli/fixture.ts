@@ -12,8 +12,8 @@ const usage = { inputTokens: 0, outputTokens: 0, cachedInputTokens: 0, costUsd: 
 export const session: Session = {
   id: 'sess_0123456789', projectId: 'p1', title: 'Build a modern dashboard', status: 'running', phase: 'reviewing', round: 2,
   createdAt: T0, updatedAt: T0 + 60_000,
-  config: { mode: 'pair', developer: 'codex', reviewer: 'claude', models: { codex: { model: 'gpt-6.1-sol', effort: 'medium' }, claude: { model: 'opus' } }, maxRounds: 3, network: false, mock: true },
-  workspacePath: '/tmp/ws', branch: 'lina/sess_012', baseCommit: 'aaaaaaa', usage: { codex: usage, claude: usage }, lastSeq: 9, pendingMessages: 1, mock: true,
+  config: { mode: 'pair', developer: 'codex', reviewer: 'claude', models: { codex: { model: 'gpt-6.1-sol', effort: 'medium' }, claude: { model: 'opus' }, freebuff: { model: 'auto' } }, maxRounds: 3, network: false, mock: true },
+  workspacePath: '/tmp/ws', branch: 'lina/sess_012', baseCommit: 'aaaaaaa', usage: { codex: usage, claude: usage, freebuff: usage }, lastSeq: 9, pendingMessages: 1, mock: true,
 };
 
 export const findings: Finding[] = [
@@ -45,6 +45,7 @@ export function snapshot(): SessionSnapshot {
       agents: {
         codex: { status: 'writing', detail: 'src/App.tsx', role: 'developer', since: T0, model: 'gpt-6.1-sol' },
         claude: { status: 'reviewing', role: 'reviewer', since: T0, model: 'opus' },
+        freebuff: { status: 'idle', since: T0 },
       },
       streams: { s1: { agent: 'claude', text: 'Looking at the **diff** now' } },
       rateLimits: { claude: { windows: { five_hour: { utilization: 0.42 } }, observedAt: T0 } },

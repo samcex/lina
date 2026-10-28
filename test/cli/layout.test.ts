@@ -144,7 +144,7 @@ describe('project resolution and config', () => {
   it('builds session config from flags on top of settings', () => {
     const c = configFromFlags({ claudeModel: 'sonnet', codexEffort: 'high', developer: 'claude', mock: true, mode: 'architect', maxRounds: 4 }, DEFAULT_SETTINGS);
     expect(c).toEqual({
-      models: { codex: { model: 'gpt-6.1-sol', effort: 'high' }, claude: { model: 'sonnet' } },
+      models: { codex: { model: 'gpt-6.1-sol', effort: 'high' }, claude: { model: 'sonnet' }, freebuff: { model: 'auto' } },
       developer: 'claude', reviewer: 'codex', mode: 'architect', maxRounds: 4, mock: true,
     });
     expect(configFromFlags({}, DEFAULT_SETTINGS)).toEqual({});

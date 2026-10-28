@@ -69,7 +69,7 @@ describe('completion', () => {
     expect(complete('/ret', 4)).toEqual({ value: '/retry ', cursor: 7 });
     expect(complete('/res', 4)).toEqual({ value: '/resume ', cursor: 8 });
     expect(complete('/mode ar', 8)).toEqual({ value: '/mode architect ', cursor: 16 });
-    expect(argSuggestions('/approve ')).toEqual(['squash', 'merge', 'branch', 'codex', 'claude']);
+    expect(argSuggestions('/approve ')).toEqual(['squash', 'merge', 'branch', 'codex', 'claude', 'freebuff']);
     expect(argSuggestions('/model codex gpt x')).toEqual(['xhigh']);
     expect(argSuggestions('/models cl')).toEqual(['claude']);
     expect(argSuggestions('/models codex gpt x')).toEqual(['xhigh']);
@@ -120,20 +120,24 @@ describe('modes v2 slash commands', () => {
     expect(argSuggestions('/mode ')).toEqual(['pair', 'architect', 'solo', 'parallel', 'compete', 'custom']);
     expect(complete('/mode co', 8)).toEqual({ value: '/mode compete ', cursor: 14 });
     expect(complete('/mode cu', 8)).toEqual({ value: '/mode custom ', cursor: 13 });
-    expect(argSuggestions('/choose ')).toEqual(['codex', 'claude']);
+    expect(argSuggestions('/choose ')).toEqual(['codex', 'claude', 'freebuff']);
     expect(complete('/choose cl', 10)).toEqual({ value: '/choose claude ', cursor: 15 });
     expect(complete('/diff co', 8)).toEqual({ value: '/diff codex ', cursor: 12 });
     expect(argSuggestions('/approve claude ')).toEqual(['squash', 'merge', 'branch']);
-    expect(argSuggestions('/approve merge ')).toEqual(['codex', 'claude']);
+    expect(argSuggestions('/approve merge ')).toEqual(['codex', 'claude', 'freebuff']);
     expect(argSuggestions('/team ')).toEqual(['plan=', 'critic=', 'dev=', 'review=']);
     expect(complete('/team cr', 8)).toEqual({ value: '/team critic=', cursor: 13 });
     expect(complete('/team critic=cl', 15)).toEqual({ value: '/team critic=claude ', cursor: 20 });
     expect(argSuggestions('/team plan=claude ')).toEqual(['critic=', 'dev=', 'review=']);
     expect(argSuggestions('/team plan=claude,dev=c')).toEqual(['plan=claude,dev=codex', 'plan=claude,dev=claude']);
     expect(argLabel('plan=claude,dev=codex')).toBe('dev=codex');
-    expect(argSuggestions('/team review=codex')).toEqual(['review=codex+claude']);
-    expect(argSuggestions('/mode custom dev=')).toEqual(['dev=codex', 'dev=claude']);
+    expect(argSuggestions('/team review=codex')).toEqual(['review=codex+claude', 'review=codex+freebuff']);
+    expect(argSuggestions('/mode custom dev=')).toEqual(['dev=codex', 'dev=claude', 'dev=freebuff']);
     expect(slashSuggestions('/ch').map((s) => s.name)).toEqual(['changes', 'choose']);
     expect(slashSuggestions('/te').map((s) => s.name)).toEqual(['team', 'tests']);
   });
+});
+
+it('provides the Freebuff delegation team with both independent supervisors',()=>{
+ expect(parseSlash('/delegate')).toEqual({type:'team',team:{planner:'codex',planCritic:'claude',developer:'freebuff',reviewers:['codex','claude']}});
 });

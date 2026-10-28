@@ -1,6 +1,6 @@
 # ◆ LINA
 
-LINA runs **OpenAI Codex** and **Claude Code** as one engineering team. One agent implements,
+LINA runs **OpenAI Codex**, **Claude Code** and **Freebuff** as one engineering team. One agent implements,
 the other reviews like a demanding senior engineer. They disagree with evidence, revise, and
 make and verify changes directly in your project. You can watch and steer from the terminal or the
 browser, and both show the same live session.
@@ -447,3 +447,9 @@ The release is checked with unit/integration tests, TypeScript checks and produc
   are not affected.
 * **Integration conflicts.** Parallel conflicts are resolved by the lead agent. If markers remain, LINA aborts
   the merge and the session stops at a failed step for you to retry; it never commits markers.
+
+### Delegate implementation to Freebuff
+
+With the Freebuff CLI installed and logged in, run `/delegate` to let Codex plan, Claude critique, Freebuff implement and address findings, and both Codex and Claude review the actual changes. Then send a task or `/goal <objective>`. The team is preserved for goal workflows. Use `/models freebuff` and `lina doctor` to check availability.
+
+Freebuff is also available through `@freebuff` and the custom team editor. LINA can fall back to it when other installed providers are unavailable. Pending independent reviews resume after usage limits reset. Freebuff runs its own configured model; the currently tested CLI does not expose nested worker spawning.

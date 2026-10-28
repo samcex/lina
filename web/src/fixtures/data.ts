@@ -3,7 +3,7 @@ import type {
   Actor, AgentId, AgentModels, AnyLinaEvent, DiffFile, DoctorCheck, EventDataMap, EventType, Finding, Project, Session,
   SessionSnapshot, Settings, TreeEntry, UsageTotals,
 } from '@shared/types';
-import { DEFAULT_SETTINGS } from '@shared/types';
+import { DEFAULT_SETTINGS, byAgent, zeroUsage } from '@shared/types';
 
 const MIN = 60_000;
 export const T0 = Date.now() - 46 * MIN;
@@ -22,17 +22,17 @@ export function mkEvents(sessionId: string) {
 export const usage = (i: number, o: number, c: number, cost: number, turns: number): UsageTotals => ({ inputTokens: i, outputTokens: o, cachedInputTokens: c, costUsd: cost, turns });
 
 export const PROJECTS: Project[] = [
-  { id: 'prj_atlas', name: 'atlas-api', path: '/home/developer/code/atlas-api', createdAt: T0 - 9 * 864e5, updatedAt: T0, settings: { network: false, maxRounds: 3, defaultMode: 'pair', testCommand: 'npm test' } },
-  { id: 'prj_lumen', name: 'lumen-web', path: '/home/developer/code/lumen-web', createdAt: T0 - 30 * 864e5, updatedAt: T0 - 864e5, settings: { network: false, maxRounds: 3, defaultMode: 'architect' } },
-  { id: 'prj_tide', name: 'tide-cli', path: '/home/developer/code/tide-cli', createdAt: T0 - 60 * 864e5, updatedAt: T0 - 5 * 864e5, settings: { network: true, maxRounds: 2, defaultMode: 'solo' } },
+  { id: 'prj_atlas', name: 'atlas-api', path: '/home/sam/code/atlas-api', createdAt: T0 - 9 * 864e5, updatedAt: T0, settings: { network: false, maxRounds: 3, defaultMode: 'pair', testCommand: 'npm test' } },
+  { id: 'prj_lumen', name: 'lumen-web', path: '/home/sam/code/lumen-web', createdAt: T0 - 30 * 864e5, updatedAt: T0 - 864e5, settings: { network: false, maxRounds: 3, defaultMode: 'architect' } },
+  { id: 'prj_tide', name: 'tide-cli', path: '/home/sam/code/tide-cli', createdAt: T0 - 60 * 864e5, updatedAt: T0 - 5 * 864e5, settings: { network: true, maxRounds: 2, defaultMode: 'solo' } },
 ];
 
 export function baseSession(id: string, projectId: string, title: string, over: Partial<Session> = {}): Session {
   return {
     id, projectId, title, status: 'idle', phase: 'idle', round: 0, createdAt: T0, updatedAt: T0 + 40 * MIN,
-    config: { mode: 'pair', developer: 'codex', reviewer: 'claude', models: { codex: { model: 'gpt-6.1-sol', effort: 'medium' }, claude: { model: 'opus' } }, maxRounds: 3, network: false },
-    workspacePath: `/home/developer/.lina/workspaces/${id}`, branch: `lina/${id.slice(4, 10)}`, baseCommit: '9f3c2a1d7e', headCommit: undefined,
-    usage: { codex: usage(0, 0, 0, 0, 0), claude: usage(0, 0, 0, 0, 0) }, lastSeq: 0, pendingMessages: 0, ...over,
+    config: { mode: 'pair', developer: 'codex', reviewer: 'claude', models: { codex: { model: 'gpt-6.1-sol', effort: 'medium' }, claude: { model: 'opus' }, freebuff: { model: 'auto' } }, maxRounds: 3, network: false },
+    workspacePath: `/home/sam/.lina/workspaces/${id}`, branch: `lina/${id.slice(4, 10)}`, baseCommit: '9f3c2a1d7e', headCommit: undefined,
+    usage: zeroUsage(), lastSeq: 0, pendingMessages: 0, ...over,
   };
 }
 
@@ -249,7 +249,7 @@ export function mainFixture(): SessionSnapshot {
 
   const session = baseSession(sid, 'prj_atlas', 'Rate-limit the login endpoint', {
     status: 'awaiting_approval', phase: 'awaiting_approval', round: 3, lastSeq: list.length, headCommit: 'c7d02b5e19', branch: 'lina/x7k2q9',
-    usage: { codex: usage(412_800, 21_340, 301_000, 2.84, 4), claude: usage(286_100, 9_870, 190_400, 1.96, 4) }, updatedAt: Date.now() - 1 * MIN,
+    usage: { codex: usage(412_800, 21_340, 301_000, 2.84, 4), claude: usage(286_100, 9_870, 190_400, 1.96, 4), freebuff: usage(0, 0, 0, 0, 0) }, updatedAt: Date.now() - 1 * MIN,
   });
   return {
     session, project: PROJECTS[0], events: list, findings: final,
@@ -257,6 +257,7 @@ export function mainFixture(): SessionSnapshot {
       agents: {
         codex: { status: 'idle', role: 'developer', since: Date.now() - 30 * MIN, model: 'gpt-6.1-sol' },
         claude: { status: 'thinking', role: 'reviewer', since: Date.now() - 18_000, model: 'claude-opus-5-5' },
+        freebuff: { status: 'idle', since: Date.now() - 30 * MIN },
       },
       streams: { s_claude_1: { agent: 'claude', text: "Short answer: **yes**, if Fly's edge proxy sits in front of the app, `req.ip` is the proxy address. Fly appends the client IP as the last hop, so trusting exactly one hop is safe:\n\n```ts\n// src/app.ts\napp.set('trust proxy', 1);\n```\n\nWith that, " } },
       rateLimits: {},
@@ -276,8 +277,8 @@ export function runningFixture(): SessionSnapshot {
   ev('activity', 'claude', { agent: 'claude', id: 'c3', kind: 'command', title: 'npx tsc --noEmit', state: 'running', source: 'observed' }, 45.5);
   const session = baseSession(sid, 'prj_atlas', 'Stripe webhook schema migration', {
     status: 'running', phase: 'implementing', round: 1, lastSeq: list.length, updatedAt: Date.now() - 20_000, mock: true,
-    config: { mode: 'architect', developer: 'claude', reviewer: 'codex', models: { codex: { model: 'gpt-6-astra', effort: 'high' }, claude: { model: 'opus' } }, maxRounds: 3, network: false, mock: true },
-    usage: { codex: usage(0, 0, 0, 0, 0), claude: usage(98_200, 4_100, 61_000, 0.71, 2) }, pendingMessages: 1,
+    config: { mode: 'architect', developer: 'claude', reviewer: 'codex', models: { codex: { model: 'gpt-6-astra', effort: 'high' }, claude: { model: 'opus' }, freebuff: { model: 'auto' } }, maxRounds: 3, network: false, mock: true },
+    usage: { codex: usage(0, 0, 0, 0, 0), claude: usage(98_200, 4_100, 61_000, 0.71, 2), freebuff: usage(0, 0, 0, 0, 0) }, pendingMessages: 1,
   });
   return {
     session, project: PROJECTS[0], events: list, findings: [],
@@ -285,6 +286,7 @@ export function runningFixture(): SessionSnapshot {
       agents: {
         claude: { status: 'running', detail: 'npx tsc --noEmit', role: 'developer', since: Date.now() - 12_000, model: 'claude-opus-5-5' },
         codex: { status: 'waiting', role: 'reviewer', since: Date.now() - 14 * MIN, model: 'gpt-6-astra' },
+        freebuff: { status: 'idle', since: Date.now() - 14 * MIN },
       },
       streams: {}, rateLimits: {},
     },
@@ -304,7 +306,7 @@ export function sidebarSessions(): Session[] {
 }
 
 export function emptySnapshot(s: Session): SessionSnapshot {
-  return { session: s, project: PROJECTS.find((p) => p.id === s.projectId)!, events: [], findings: [], live: { agents: { codex: { status: 'idle', since: Date.now() }, claude: { status: 'idle', since: Date.now() } }, streams: {}, rateLimits: {} } };
+  return { session: s, project: PROJECTS.find((p) => p.id === s.projectId)!, events: [], findings: [], live: { agents: byAgent(() => ({ status: 'idle' as const, since: Date.now() })), streams: {}, rateLimits: {} } };
 }
 
 export const MODELS: Record<AgentId, AgentModels> = {
@@ -326,6 +328,13 @@ export const MODELS: Record<AgentId, AgentModels> = {
       { id: 'claude-opus-5-5', label: 'claude-opus-5-5', source: 'observed' },
     ],
   },
+  freebuff: {
+    agent: 'freebuff', installed: true, version: '0.2.34', defaultModel: 'glm-5.3-flash', discoveredVia: 'freebuff settings.json',
+    models: [
+      { id: 'glm-5.3-flash', label: 'glm-5.3-flash', description: 'Model selected in the Freebuff CLI (/model). LINA cannot override it per turn.', source: 'catalog' },
+      { id: 'auto', label: 'auto', description: 'Use whatever model the Freebuff CLI has selected.', source: 'alias' },
+    ],
+  },
 };
 
 export const SETTINGS: Settings = { ...DEFAULT_SETTINGS };
@@ -335,6 +344,7 @@ export const DOCTOR: DoctorCheck[] = [
   { id: 'git', label: 'git', ok: true, detail: 'git version 2.53.0' },
   { id: 'codex', label: 'Codex CLI', ok: true, detail: 'codex-cli 0.142.0 · logged in (ChatGPT Pro)' },
   { id: 'claude', label: 'Claude Code CLI', ok: true, detail: '3.4.1 · logged in (Max subscription)' },
+  { id: 'freebuff', label: 'Freebuff CLI', ok: true, detail: '0.2.34 · logged in · interactive TUI (no headless mode)', warn: true },
   { id: 'bwrap', label: 'Claude OS sandbox (bubblewrap)', ok: true, warn: true, detail: 'bwrap found but unprivileged user namespaces are restricted by AppArmor.', hint: 'sudo sysctl kernel.apparmor_restrict_unprivileged_userns=0 — or keep claudeSandbox on "auto" (disabled).' },
   { id: 'sqlite', label: 'SQLite FTS5', ok: true, detail: 'node:sqlite with FTS5' },
 ];

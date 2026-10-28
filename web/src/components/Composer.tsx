@@ -185,12 +185,13 @@ export function Composer({ view }: { view: SessionView }) {
   };
   const onDrop = (e: DragEvent) => { e.preventDefault(); setDrag(false); const files = Array.from(e.dataTransfer.files); if (files.length) void addFiles(files); };
 
-  const directed = text.match(/^@(codex|claude)\b/)?.[1] as AgentId | undefined;
+  const mentionTarget = text.match(/^@([a-z]+)\b/)?.[1];
+  const directed = mentionTarget && (AGENT_IDS as string[]).includes(mentionTarget) ? (mentionTarget as AgentId) : undefined;
   // Short forms on phones: a one-row textarea must never wrap (and clip) its placeholder.
   const placeholder = awaiting ? (narrow ? 'Request changes…' : 'Request changes — your message starts a revision cycle…')
     : running ? (narrow ? 'Guide the agents…' : 'Add guidance for the agents…')
     : view.timeline.length ? (narrow ? 'Reply or give a task…' : 'Reply, or give the next task…')
-    : narrow ? 'Describe the task…' : 'Describe the task for Codex and Claude…';
+    : narrow ? 'Describe the task…' : `Describe the task for ${AGENT_IDS.map((a) => AGENT_NAME[a]).join(', ')}…`;
 
   return (
     <div className={cx('composer-wrap')}>

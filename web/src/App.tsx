@@ -4,7 +4,8 @@ import { useApp, useUI } from './lib/store';
 import { useLina } from './lib/lina';
 import { forgetToken, sessionFromHash } from './lib/auth';
 import { modKey, useMedia } from './lib/hooks';
-import { cx } from './lib/format';
+import { AGENT_IDS } from '@shared/types';
+import { AGENT_NAME, cx } from './lib/format';
 import { Sidebar } from './components/Sidebar';
 import { SessionHeader } from './components/SessionHeader';
 import { Conversation } from './components/Conversation';
@@ -127,8 +128,12 @@ function Welcome() {
         <BrandMark size={72} live />
         <h1 className="welcome-title">Two minds, one codebase.</h1>
         <p className="welcome-sub">
-          LINA pairs <span className="hero-agent" data-actor="codex">Codex</span> and <span className="hero-agent" data-actor="claude">Claude</span> as
-          a developer and a reviewer. Ask a question, give a coding task, and keep chatting as they work directly in your project.
+          LINA runs {AGENT_IDS.map((a, i) => (
+            <span key={a}>
+              {i > 0 && (i === AGENT_IDS.length - 1 ? ' and ' : ', ')}
+              <span className="hero-agent" data-actor={a}>{AGENT_NAME[a]}</span>
+            </span>
+          ))} as a developer and a reviewer. Ask a question, give a coding task, and keep chatting as they work directly in your project.
         </p>
         <div className="welcome-actions">
           {loaded && projects.length === 0 ? (

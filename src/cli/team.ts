@@ -1,10 +1,10 @@
 // Custom-mode team specs: `plan=claude,critic=codex,dev=claude,review=codex+claude`.
 // Parsing, validation (friendly errors), formatting and short role tags.
-import type { AgentId, Mode, SessionConfig, TeamConfig } from '../shared/types.js';
+import { AGENT_IDS, peerOf, type AgentId, type Mode, type SessionConfig, type TeamConfig } from '../shared/types.js';
 import { teamOf } from '../shared/types.js';
 import { AGENT_NAME } from './theme.js';
 
-const AGENT_LIST: AgentId[] = ['codex', 'claude'];
+const AGENT_LIST: AgentId[] = AGENT_IDS;
 
 export type TeamKey = 'plan' | 'critic' | 'dev' | 'review';
 export const TEAM_KEYS: TeamKey[] = ['plan', 'critic', 'dev', 'review'];
@@ -19,7 +19,7 @@ const KEY_ALIASES: Record<string, TeamKey> = {
 
 export const TEAM_SPEC_EXAMPLE = 'plan=claude,critic=codex,dev=claude,review=codex+claude';
 export const TEAM_SPEC_HELP =
-  `Spec: ${TEAM_SPEC_EXAMPLE} — plan/critic: codex|claude|none · dev: codex|claude · review: codex, claude, codex+claude or none (comma or space separated; omitted keys use dev plans, the other agent critiques and reviews)`;
+  `Spec: ${TEAM_SPEC_EXAMPLE} — plan/critic: ${AGENT_IDS.join('|')}|none · dev: ${AGENT_IDS.join('|')} · review: any two of ${AGENT_IDS.join(', ')} or none (comma or space separated; omitted keys use dev plans, the other agent critiques and reviews)`;
 
 export type TeamParse = { ok: true; team: TeamConfig } | { ok: false; message: string; hint?: string };
 
@@ -78,11 +78,11 @@ export function parseTeamSpec(spec: string, fallbackDev: AgentId = 'codex'): Tea
   if (seen.has('dev')) {
     const raw = seen.get('dev')!;
     const d = /^(none|-|off)$/i.test(raw) ? null : agentValue('dev', raw, false);
-    if (d === null) return { ok: false, message: 'dev= cannot be none — someone has to write the code', hint: 'dev=codex or dev=claude' };
+    if (d === null) return { ok: false, message: 'dev= cannot be none — someone has to write the code', hint: `dev=${AGENT_IDS.join(' or dev=')}` };
     if (typeof d === 'object') return { ok: false, message: d.error, hint: d.hint };
     developer = d;
   }
-  const other: AgentId = developer === 'codex' ? 'claude' : 'codex';
+  const other: AgentId = peerOf(developer);
 
   const pick = (key: 'plan' | 'critic', def: AgentId | null): AgentId | null | TeamParse => {
     if (!seen.has(key)) return def;
@@ -102,8 +102,8 @@ export function parseTeamSpec(spec: string, fallbackDev: AgentId = 'codex'): Tea
     if (raw !== '' && raw !== 'none' && raw !== '-' && raw !== 'off') {
       for (const part of raw.split('+').map((s) => s.trim())) {
         const v = agentValue('review', part, false);
-        if (v === null || typeof v === 'object') return { ok: false, message: (v as { error: string }).error, hint: (v as { hint?: string }).hint ?? 'review=codex+claude, review=claude or review=none' };
-        if (reviewers.includes(v)) return { ok: false, message: `${AGENT_NAME[v]} is listed twice in review=`, hint: 'Reviewers must be distinct: review=codex+claude' };
+        if (v === null || typeof v === 'object') return { ok: false, message: (v as { error: string }).error, hint: (v as { hint?: string }).hint ?? `review=${AGENT_IDS[0]}+${AGENT_IDS[1]}, review=${AGENT_IDS[0]} or review=none` };
+        if (reviewers.includes(v)) return { ok: false, message: `${AGENT_NAME[v]} is listed twice in review=`, hint: 'Reviewers must be distinct' };
         reviewers.push(v);
       }
     }
@@ -119,8 +119,8 @@ export function validateTeam(t: TeamConfig): { message: string; hint?: string } 
   if (!isAgent(t.developer)) return { message: `Unknown developer "${String(t.developer)}"` };
   if (t.planner !== null && !isAgent(t.planner)) return { message: `Unknown planner "${String(t.planner)}"` };
   if (t.planCritic !== null && !isAgent(t.planCritic)) return { message: `Unknown plan critic "${String(t.planCritic)}"` };
-  if (!Array.isArray(t.reviewers) || t.reviewers.length > 2) return { message: 'At most two reviewers', hint: 'review=codex+claude' };
-  if (new Set(t.reviewers).size !== t.reviewers.length) return { message: 'Reviewers must be distinct', hint: 'review=codex+claude' };
+  if (!Array.isArray(t.reviewers) || t.reviewers.length > 2) return { message: 'At most two reviewers', hint: `review=${AGENT_IDS[0]}+${AGENT_IDS[1]}` };
+  if (new Set(t.reviewers).size !== t.reviewers.length) return { message: 'Reviewers must be distinct', hint: `review=${AGENT_IDS[0]}+${AGENT_IDS[1]}` };
   for (const r of t.reviewers) if (!isAgent(r)) return { message: `Unknown reviewer "${String(r)}"` };
   return undefined;
 }
@@ -143,7 +143,7 @@ export function teamSummary(t: TeamConfig): string {
 
 /** Mirrors the daemon: config.developer = team.developer, reviewer = first reviewer or the other agent. */
 export function rolesForTeam(t: TeamConfig): { developer: AgentId; reviewer: AgentId } {
-  return { developer: t.developer, reviewer: t.reviewers[0] ?? (t.developer === 'codex' ? 'claude' : 'codex') };
+  return { developer: t.developer, reviewer: t.reviewers[0] ?? peerOf(t.developer) };
 }
 
 /** Team used when switching to custom without an explicit one: current team › saved default › architect-like. */
@@ -151,7 +151,7 @@ export function defaultTeam(cfg: Partial<Pick<SessionConfig, 'developer' | 'revi
   if (cfg.team) return cfg.team;
   if (saved) return saved;
   const dev: AgentId = cfg.developer ?? 'codex';
-  const rev: AgentId = cfg.reviewer && cfg.reviewer !== dev ? cfg.reviewer : dev === 'codex' ? 'claude' : 'codex';
+  const rev: AgentId = cfg.reviewer && cfg.reviewer !== dev ? cfg.reviewer : peerOf(dev);
   return teamOf({ mode: 'custom', developer: dev, reviewer: rev });
 }
 
@@ -185,6 +185,6 @@ export function teamTokenSuggestions(token: string, used: string[] = []): string
   const key = KEY_ALIASES[seg.slice(0, eq)];
   if (!key) return [];
   const partial = seg.slice(eq + 1);
-  const values = key === 'dev' ? AGENT_LIST : key === 'review' ? ['codex', 'claude', 'codex+claude', 'none'] : [...AGENT_LIST, 'none'];
+  const values = key === 'dev' ? AGENT_LIST : key === 'review' ? [...AGENT_LIST, ...AGENT_IDS.flatMap(a => AGENT_IDS.filter(b => b !== a).map(b => `${a}+${b}`)), 'none'] : [...AGENT_LIST, 'none'];
   return values.filter((v) => v.startsWith(partial) && v !== partial).map((v) => `${head}${seg.slice(0, eq)}=${v}`);
 }

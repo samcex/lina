@@ -3,7 +3,7 @@ import {
   ChevronRight, CircleAlert, FileDiff, GitCommitHorizontal, Play, RotateCcw, ShieldCheck, Timer, ArrowRight, Wrench,
   GitMerge, GitPullRequestDraft, Split, TriangleAlert, CircleCheck, CircleX, FileCode2,
 } from 'lucide-react';
-import type { AgentId, Finding, LinaEvent, SessionConfig } from '@shared/types';
+import type { Actor, AgentId, Finding, LinaEvent, SessionConfig } from '@shared/types';
 import { PHASE_LABEL } from '@shared/reducer';
 import type { ActEvent } from '../../lib/timeline';
 import { useLina } from '../../lib/lina';
@@ -66,7 +66,7 @@ export const ActivityGroup = memo(function ActivityGroup({ agent, acts, start, e
   );
 }, (a, b) => a.acts.length === b.acts.length && a.acts[a.acts.length - 1] === b.acts[b.acts.length - 1]);
 
-function CardHead({ actor, title, right, sub }: { actor: 'codex' | 'claude' | 'lina'; title: ReactNode; right?: ReactNode; sub?: ReactNode }) {
+function CardHead({ actor, title, right, sub }: { actor: Actor; title: ReactNode; right?: ReactNode; sub?: ReactNode }) {
   return (
     <div className="card-head">
       <Avatar actor={actor} size={22} />
@@ -290,6 +290,11 @@ export function SplitCard({ e }: { e: LinaEvent<'split'> }) {
               <Glyph actor={p.agent} size={14} />
               <span className="split-part-agent">{AGENT_NAME[p.agent]}</span>
               {p.agent === d.lead && <span className="role-tag">Lead</span>}
+              {d.parts.length > 1 && (
+                <span className="role-tag" data-agent={d.parts[(i + 1) % d.parts.length].agent} title={`Cross-review: ${AGENT_NAME[d.parts[(i + 1) % d.parts.length].agent]} reviews this part`}>
+                  reviewed by {AGENT_NAME[d.parts[(i + 1) % d.parts.length].agent]}
+                </span>
+              )}
             </header>
             <h4 className="split-part-title">{p.title}</h4>
             <p className="split-part-scope">{p.scope}</p>
@@ -301,6 +306,11 @@ export function SplitCard({ e }: { e: LinaEvent<'split'> }) {
           </article>
         ))}
       </div>
+      {d.parts.length > 1 && (
+        <p className="split-review-map">
+          cross-review: {d.parts.map((p, i) => `${AGENT_NAME[p.agent]} reviews ${AGENT_NAME[d.parts[(i + 1) % d.parts.length].agent]}`).join(' · ')}
+        </p>
+      )}
     </section>
   );
 }

@@ -473,6 +473,10 @@ export function ModelsOverlay({ store, width, height, onClose, initialAgent }: C
   };
   const w = innerW(width);
   const h = innerH(height);
+  // Tab hit areas drive both rendering and touch input, so they must come from the same list.
+  const tabHits: { agent: AgentId; start: number; end: number }[] = [];
+  let tabX = 0;
+  for (const a of AGENT_IDS) { const label = ` ${AGENT_NAME[a]} `; tabHits.push({ agent: a, start: tabX, end: tabX + strWidth(label) }); tabX += strWidth(label) + 2; }
   const prefixRows = 4;
   const room = Math.max(1, h - prefixRows - 3);
   const win = listWindow(models.length, room, sel);
@@ -526,8 +530,8 @@ export function ModelsOverlay({ store, width, height, onClose, initialAgent }: C
     const row = event.y - 6, x = event.x - 3;
     if (x < 0 || x >= w) return;
     if (row === 0) {
-      if (x < 7) switchAgent('codex');
-      else if (x >= 9 && x < 17) switchAgent('claude');
+      const hit = tabHits.find((t) => x >= t.start && x < t.end);
+      if (hit) switchAgent(hit.agent);
     } else if (row === 2) setSearching(true);
     else if (row >= prefixRows && row < prefixRows + room) void apply(models[win.start + row - prefixRows]);
     else if (row === prefixRows + room && model) {
@@ -539,7 +543,11 @@ export function ModelsOverlay({ store, width, height, onClose, initialAgent }: C
     if (applying.current) return;
     if (key.ctrl && input === 'c') return onClose();
     if (key.escape) { if (searching || query) { setSearching(false); setQuery(''); } else onClose(); return; }
-    if (key.leftArrow || key.rightArrow || key.tab) { switchAgent(agent === 'codex' ? 'claude' : 'codex'); return; }
+    if (key.leftArrow || key.rightArrow || key.tab) {
+      const step = key.leftArrow ? AGENT_IDS.length - 1 : 1;
+      switchAgent(AGENT_IDS[(AGENT_IDS.indexOf(agent) + step) % AGENT_IDS.length]);
+      return;
+    }
     if (key.upArrow) { setSel((s) => s - 1); return; }
     if (key.downArrow) { setSel((s) => s + 1); return; }
     if (key.pageUp) { setSel((s) => s - room); return; }
@@ -556,7 +564,7 @@ export function ModelsOverlay({ store, width, height, onClose, initialAgent }: C
     else if (input === 'e') cycleEffort();
   });
   const tab = (a: AgentId) => (a === agent ? bg(actorColor(a))(fg(C.ink)(bold(` ${AGENT_NAME[a]} `))) : fg(actorColor(a))(` ${AGENT_NAME[a]} `));
-  const lines: string[] = [tab('codex') + '  ' + tab('claude'),
+  const lines: string[] = [AGENT_IDS.map(tab).join('  '),
     truncateAnsi(dim(`Current: ${current?.model ?? cat?.defaultModel ?? 'CLI default'}${current?.effort ? ' · ' + current.effort : ''}`), w),
     truncateAnsi(searching ? fg(C.linaSoft)(`Search: ${query}▏`) : dim(query ? `Search: ${query}` : '[Search]  / to filter models'), w), ''];
   if (res.loading && !res.data) lines.push(dim('Discovering models…'));

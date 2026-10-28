@@ -1,3 +1,4 @@
+import { DELEGATION_TEAM } from '../shared/types.js';
 // Slash commands for the TUI composer: parsing, validation and completion.
 import type { AgentId, ApplyStrategy, Effort, Mode, TeamConfig } from '../shared/types.js';
 import { AGENTS, CLI_MODES, EFFORTS, closest } from './args.js';
@@ -14,20 +15,21 @@ export const SLASH_COMMANDS: SlashSpec[] = [
   { name: 'history', args: '[earlier|event number]', desc: 'Open saved conversations; earlier or a number loads messages in this chat' },
   { name: 'search', args: '<text>', desc: 'Search all conversations and open a matching message' },
   { name: 'project', desc: 'Switch project' },
-  { name: 'model', args: '[codex|claude] [id] [effort]', desc: 'Pick a model, or set one directly' },
-  { name: 'models', args: '[codex|claude] [id] [effort]', desc: 'Tap to choose a model and effort for either agent' },
+  { name: 'model', args: `[${AGENTS.join('|')}] [id] [effort]`, desc: 'Pick a model, or set one directly' },
+  { name: 'models', args: `[${AGENTS.join('|')}] [id] [effort]`, desc: 'Tap to choose a model and effort for an agent' },
+  { name: 'delegate', desc: 'Freebuff implements; Codex and Claude plan and review' },
   { name: 'roles', desc: 'Swap developer and reviewer' },
   { name: 'mode', args: '[pair|architect|solo|parallel|compete|custom]', desc: 'Change the collaboration mode (no argument: picker)' },
   { name: 'team', args: '[plan=… critic=… dev=… review=…]', desc: 'Custom team: who plans, critiques, builds, reviews (no argument: picker)' },
-  { name: 'live', args: '[codex|claude]', aliases: ['agents', 'activity'], desc: 'What the agents are doing right now: live text, commands, output (Ctrl+T)' },
-  { name: 'diff', args: '[codex|claude]', desc: 'Show the diff (of one agent\'s version in parallel/compete)' },
+  { name: 'live', args: `[${AGENTS.join('|')}]`, aliases: ['agents', 'activity'], desc: 'What the agents are doing right now: live text, commands, output (Ctrl+T)' },
+  { name: 'diff', args: `[${AGENTS.join('|')}]`, desc: 'Show the diff (of one agent\'s version in parallel/compete)' },
   { name: 'changes', args: '[turn]', desc: 'List writing turns, or inspect one turn’s actual diff' },
   { name: 'undo', args: '[turn]', desc: 'Undo the latest writing turn, preserving later independent edits' },
   { name: 'preview', args: '[start <command>|stop <id>|logs <id>]', aliases: ['previews'], desc: 'List or manage persistent preview servers' },
   { name: 'findings', desc: 'Review findings (w waives an escalated one)' },
   { name: 'tests', desc: 'Test runs verified by LINA' },
-  { name: 'choose', args: '<codex|claude>', desc: 'Compete: pick the winning version (still awaits approval)' },
-  { name: 'approve', args: '[codex|claude] [squash|merge|branch]', desc: 'Apply the work to your repository (compete: name the winner)' },
+  { name: 'choose', args: AGENTS.length ? `<${AGENTS.join('|')}>` : '<agent>', desc: 'Compete: pick the winning version (still awaits approval)' },
+  { name: 'approve', args: `[${AGENTS.join('|')}] [squash|merge|branch]`, desc: 'Apply the work to your repository (compete: name the winner)' },
   { name: 'reject', args: '[note]', desc: 'Reject the result (workspace is kept)' },
   { name: 'pause', desc: 'Pause at the next turn boundary' },
   { name: 'resume', args: '[last|session id]', desc: 'Reopen a saved conversation or resume the current paused session' },
@@ -132,6 +134,7 @@ export function parseSlash(input: string): SlashAction {
     case 'search':
       return rest ? { type: 'search', query: rest } : { type: 'error', message: 'Enter text to search for', hint: usage('search') };
     case 'project': return noArgs({ type: 'project' });
+    case 'delegate': return noArgs({ type: 'team', team: { ...DELEGATION_TEAM, reviewers: [...DELEGATION_TEAM.reviewers] } });
     case 'roles': return noArgs({ type: 'roles' });
     case 'live': {
       if (!args.length) return { type: 'live' };
@@ -170,7 +173,7 @@ export function parseSlash(input: string): SlashAction {
     case 'models': case 'model': {
       const [agent, model, effort] = args;
       if (!agent) return { type: 'models' };
-      if (!(AGENTS as string[]).includes(agent)) return { type: 'error', message: `Unknown agent "${agent}"`, hint: 'Agents: codex, claude' };
+      if (!(AGENTS as string[]).includes(agent)) return { type: 'error', message: `Unknown agent "${agent}"`, hint: `Agents: ${AGENTS.join(', ')}` };
       if (!model) return { type: 'models', agent: agent as AgentId };
       if (args.length > 3) return { type: 'error', message: 'Too many arguments', hint: usage(spec.name) };
       if (effort && !(EFFORTS as string[]).includes(effort)) return { type: 'error', message: `Unknown effort "${effort}"`, hint: `Efforts: ${EFFORTS.join(', ')}` };
@@ -229,7 +232,7 @@ export function slashSuggestions(input: string): SlashSpec[] {
 export function argSuggestions(input: string): string[] {
   const team = /^\/(?:team|mode\s+custom)\s+((?:\S+\s+)*)(\S*)$/.exec(input);
   if (team) return teamTokenSuggestions(team[2], team[1].split(/\s+/).filter(Boolean));
-  const m2 = /^\/models?\s+(codex|claude)\s+\S+\s+(\S*)$/.exec(input);
+  const m2 = new RegExp(`^\\/models?\\s+(${AGENTS.join('|')})\\s+\\S+\\s+(\\S*)$`).exec(input);
   if (m2) return EFFORTS.filter((e) => e.startsWith(m2[2]) && e !== m2[2]);
   const ap = /^\/approve\s+(\S+)\s+(\S*)$/.exec(input);
   if (ap) {
@@ -301,6 +304,6 @@ function commonPrefix(xs: string[]): string {
 
 /** Detects a leading @mention in a message (as the daemon routes it). */
 export function leadingMention(text: string): AgentId | undefined {
-  const m = /^@(codex|claude)\b/i.exec(text.trim());
+  const m = new RegExp(`^@(${AGENTS.join('|')})\\b`, 'i').exec(text.trim());
   return m ? (m[1].toLowerCase() as AgentId) : undefined;
 }

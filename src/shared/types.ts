@@ -1,10 +1,35 @@
 // LINA shared domain model. This file is the contract between the daemon,
 // the terminal UI and the web UI. Keep it dependency-free (runs in Node and browser).
 
-export const LINA_VERSION = '0.1.12';
+export const LINA_VERSION = '0.1.13';
 
-export type AgentId = 'codex' | 'claude';
-export const AGENT_IDS: AgentId[] = ['codex', 'claude'];
+export type AgentId = 'codex' | 'claude' | 'freebuff';
+export const AGENT_IDS: AgentId[] = ['codex', 'claude', 'freebuff'];
+/** Display names, shared by the daemon, the terminal UI and the web UI. */
+export const AGENT_LABEL: Record<AgentId, string> = { codex: 'Codex', claude: 'Claude', freebuff: 'Freebuff' };
+/**
+ * The agent that acts as `a`'s counterpart in two-agent playbooks (pair, architect, parallel,
+ * compete, cross-review): the first agent in the canonical order that is not `a`. With Codex and
+ * Claude this is exactly the historical pairing; Freebuff pairs with Codex unless Codex is `a`.
+ */
+export function peerOf(a: AgentId, among: AgentId[] = AGENT_IDS): AgentId {
+  const pool = among.length > 1 ? among : AGENT_IDS;
+  return pool.find((x) => x !== a) ?? pool[0];
+}
+
+/** Usage counters that start at zero (per agent or for a whole session). */
+export function emptyUsageTotals(): UsageTotals {
+  return { inputTokens: 0, outputTokens: 0, cachedInputTokens: 0, costUsd: 0, turns: 0 };
+}
+
+export function zeroUsage(): Record<AgentId, UsageTotals> {
+  return Object.fromEntries(AGENT_IDS.map((a) => [a, emptyUsageTotals()])) as Record<AgentId, UsageTotals>;
+}
+
+/** Builds a per-agent record from a factory (agents, models, usage, …). */
+export function byAgent<T>(make: (a: AgentId) => T): Record<AgentId, T> {
+  return Object.fromEntries(AGENT_IDS.map((a) => [a, make(a)])) as Record<AgentId, T>;
+}
 export type Actor = 'user' | 'lina' | AgentId;
 export type Role = 'developer' | 'reviewer';
 
@@ -36,6 +61,9 @@ export interface TeamConfig {
    */
   reviewers: AgentId[];
 }
+
+/** Freebuff implements the reviewed plan; both supervisors review its actual diff. */
+export const DELEGATION_TEAM: TeamConfig = { planner: 'codex', planCritic: 'claude', developer: 'freebuff', reviewers: ['codex', 'claude'] };
 
 /** The concrete pipeline a session follows. parallel/compete are not team-based and return their lead's pair team. */
 export function teamOf(cfg: Pick<SessionConfig, 'mode' | 'developer' | 'reviewer' | 'team'>): TeamConfig {
@@ -162,6 +190,11 @@ export interface SessionConfig {
   mock?: boolean;
   /** custom mode only (required there; validated: reviewers ≤ 2 distinct agents). */
   team?: TeamConfig;
+  /**
+   * parallel only: the agents that split the work, developer first (2–3 distinct agents).
+   * Absent = developer + reviewer, the classic two-way split.
+   */
+  participants?: AgentId[];
 }
 
 export interface UsageTotals {
@@ -485,7 +518,7 @@ export interface Settings {
 
 export const DEFAULT_SETTINGS: Settings = {
   accessMode: 'full',
-  models: { codex: { model: 'gpt-6.1-sol', effort: 'medium' }, claude: { model: 'opus' } },
+  models: { codex: { model: 'gpt-6.1-sol', effort: 'medium' }, claude: { model: 'opus' }, freebuff: { model: 'auto' } },
   developer: 'codex',
   defaultMode: 'pair',
   maxRounds: 3,

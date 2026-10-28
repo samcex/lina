@@ -1,5 +1,5 @@
 // Handwritten argument parser for the `lina` command (no dependencies).
-import type { AgentId, Effort, Mode, TeamConfig } from '../shared/types.js';
+import { AGENT_IDS, type AgentId, type Effort, type Mode, type TeamConfig } from '../shared/types.js';
 import { TEAM_SPEC_EXAMPLE, parseTeamSpec } from './team.js';
 
 export const COMMANDS = ['attach', 'sessions', 'projects', 'add', 'ui', 'models', 'settings', 'doctor', 'daemon', 'preview', 'notify', 'tailscale', 'home', 'help', 'version'] as const;
@@ -8,7 +8,7 @@ export type CommandName = (typeof COMMANDS)[number] | 'tui';
 export const EFFORTS: Effort[] = ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'];
 export const CLI_MODES: Mode[] = ['pair', 'architect', 'solo', 'parallel', 'compete', 'custom'];
 export const SANDBOX_MODES = ['auto', 'on', 'off'] as const;
-export const AGENTS: AgentId[] = ['codex', 'claude'];
+export const AGENTS: AgentId[] = AGENT_IDS;
 
 export interface GlobalOptions {
   project?: string;
@@ -22,6 +22,8 @@ export interface GlobalOptions {
   interactionMode?: 'chat' | 'workflow';
   /** custom mode: who plans, critiques, implements and reviews (from --team). */
   team?: TeamConfig;
+  /** parallel mode: every agent that builds a part (from --agents). */
+  agents?: AgentId[];
   maxRounds?: number;
   mock?: boolean;
 }
@@ -63,6 +65,7 @@ const FLAGS: Record<string, FlagSpec> = {
   '--interaction': { key: 'interactionMode', takesValue: true, scope: 'global' },
   '--mode': { key: 'mode', takesValue: true, scope: 'global' },
   '--team': { key: 'team', takesValue: true, scope: 'global' },
+  '--agents': { key: 'agents', takesValue: true, scope: 'global' },
   '--max-rounds': { key: 'maxRounds', takesValue: true, scope: 'global' },
   '--mock': { key: 'mock', takesValue: false, scope: 'global' },
   '--help': { key: 'help', takesValue: false, scope: 'global', short: '-h' },
@@ -190,6 +193,19 @@ export function parseArgs(argv: string[]): ParsedArgs {
         g.team = r.team;
         break;
       }
+      case 'agents': {
+        const words = value!.split(/[,\s]+/).map((w) => w.trim().toLowerCase()).filter(Boolean);
+        const list = words.includes('all') ? [...AGENT_IDS] : words;
+        if (list.length < 2) throw new ArgError('--agents needs at least two agents', `Example: --agents ${AGENT_IDS.join(',')} (or --agents all)`);
+        const agents: AgentId[] = [];
+        for (const w of list) {
+          if (!(AGENT_IDS as string[]).includes(w)) throw new ArgError(`Unknown agent in --agents: ${w}`, `Valid agents: ${AGENT_IDS.join(', ')}`);
+          if (agents.includes(w as AgentId)) throw new ArgError(`--agents lists ${w} twice`, 'Name each agent once.');
+          agents.push(w as AgentId);
+        }
+        g.agents = agents;
+        break;
+      }
       case 'maxRounds': {
         const n = Number(value);
         if (!Number.isInteger(n) || n < 1 || n > 20) throw new ArgError(`Invalid value for ${name}: "${value}"`, 'Expected a whole number between 1 and 20');
@@ -212,6 +228,17 @@ export function parseArgs(argv: string[]): ParsedArgs {
         if (spec.scope === 'global') g[spec.key] = spec.takesValue ? value : true;
         else f[spec.key] = spec.takesValue ? value : true;
     }
+  }
+
+  // --agents implies parallel mode (it only describes how a parallel task is split).
+  if (out.global.agents) {
+    if (out.global.mode && out.global.mode !== 'parallel') {
+      throw new ArgError(`--agents only applies to --mode parallel (got --mode ${out.global.mode})`, 'Drop --mode, or use --mode parallel --agents …');
+    }
+    if (out.global.developer && !out.global.agents.includes(out.global.developer)) {
+      throw new ArgError(`--developer ${out.global.developer} is not in --agents`, 'The lead must be one of the agents that build a part: add it to --agents or drop --developer.');
+    }
+    out.global.mode = 'parallel';
   }
 
   // --team implies (and only makes sense with) custom mode; it also decides the developer.
@@ -271,7 +298,7 @@ export function validateCommand(p: ParsedArgs): void {
       const sub = pos[0];
       if (!sub) break;
       if (sub === 'validate' || sub === 'set') {
-        if (pos.length !== 3) throw new ArgError(`models ${sub} needs an agent and a model`, usage(`lina models ${sub} <codex|claude> <model>${sub === 'set' ? ' [--effort low|medium|high|xhigh|max]' : ''}`));
+        if (pos.length !== 3) throw new ArgError(`models ${sub} needs an agent and a model`, usage(`lina models ${sub} <${AGENTS.join('|')}> <model>${sub === 'set' ? ' [--effort low|medium|high|xhigh|max]' : ''}`));
         oneOf('agent', pos[1], AGENTS);
         if (sub === 'validate' && p.flags.effort) throw new ArgError('--effort only applies to `lina models set`');
         break;

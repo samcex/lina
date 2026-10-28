@@ -1,7 +1,7 @@
 // In-memory stand-in for the LINA daemon. Simulates live streaming so motion can be reviewed.
 import type { LiveHandlers } from '@shared/client';
 import type { ServerMessage } from '@shared/protocol';
-import type { AgentId, AnyLinaEvent, Attachment, EventDataMap, EventType, Finding, Project, Session, SessionSnapshot, Settings } from '@shared/types';
+import { AGENT_IDS, AGENT_LABEL, peerOf, type AgentId, type AnyLinaEvent, type Attachment, type EventDataMap, type EventType, type Finding, type Project, type Session, type SessionSnapshot, type Settings } from '@shared/types';
 import type { Backend, ClientLike, LiveLike } from '../lib/backend';
 import { DIFF, DOCTOR, FILES, MODELS, PROJECTS, SETTINGS, TREE, emptySnapshot, mainFixture, runningFixture, sidebarSessions } from './data';
 import { competeFixture, competeWorkspaces, customFixture, customWorkspaces, parallelFixture, parallelWorkspaces, type Workspace, type Workspaces } from './modes';
@@ -65,7 +65,7 @@ export function createFixtureBackend(): Backend {
   };
 
   // Stream a text into the conversation word by word, then persist it as a message.
-  const streamText = async (sid: string, agent: 'codex' | 'claude', msgId: string, text: string, prefix = '') => {
+  const streamText = async (sid: string, agent: AgentId, msgId: string, text: string, prefix = '') => {
     const words = text.split(/(\s+)/);
     let acc = prefix;
     for (let i = 0; i < words.length; i += 2) {
@@ -75,7 +75,7 @@ export function createFixtureBackend(): Backend {
       await wait(45 + Math.random() * 70);
     }
     push(sid, 'stream.end', agent, { msgId, agent }, true);
-    push(sid, 'message', agent, { id: msgId, kind: 'chat', role: snapFor(sid).session.config.developer === agent ? 'developer' : 'reviewer', model: agent === 'claude' ? 'claude-opus-5-5' : 'gpt-6.1-sol', text: acc });
+    push(sid, 'message', agent, { id: msgId, kind: 'chat', role: snapFor(sid).session.config.developer === agent ? 'developer' : 'reviewer', model: MODELS[agent].defaultModel, text: acc });
   };
 
   let mainStarted = false;
@@ -129,7 +129,7 @@ export function createFixtureBackend(): Backend {
     push(sid, 'phase', 'lina', { phase: 'revising', round, note: 'both candidates' });
     updateSession(sid, { status: 'running', phase: 'revising' });
     for (const a of ['codex', 'claude'] as AgentId[]) {
-      push(sid, 'turn', a, { agent: a, state: 'start', role: 'developer', phase: 'revising', model: a === 'codex' ? 'gpt-6.1-sol' : 'claude-opus-5-5', variant: a });
+      push(sid, 'turn', a, { agent: a, state: 'start', role: 'developer', phase: 'revising', model: MODELS[a].defaultModel, variant: a });
       push(sid, 'agent.status', a, { agent: a, status: 'thinking', role: 'developer' });
     }
     await wait(1500);
@@ -178,7 +178,7 @@ export function createFixtureBackend(): Backend {
     async validateModel(agent, model) {
       await wait(1400);
       if (/^(gpt|claude|opus|sonnet)/.test(model)) return { ok: true, checkedAt: Date.now(), resolvedModel: model === 'opus' ? 'claude-opus-5-5' : model === 'sonnet' ? 'claude-sonnet-5-5' : model };
-      return { ok: false, checkedAt: Date.now(), code: 'model_unavailable', error: `${agent === 'codex' ? 'Codex' : 'Claude'}: model "${model}" not found or not allowed for this account` };
+      return { ok: false, checkedAt: Date.now(), code: 'model_unavailable', error: `${AGENT_LABEL[agent]}: model "${model}" not found or not allowed for this account` };
     },
     async projects() { return clone(projects); },
     async addProject(b) {
@@ -210,7 +210,7 @@ export function createFixtureBackend(): Backend {
       await wait(250);
       const s = snapFor(id).session;
       const queued = s.status === 'running' && !opts.interrupt;
-      const mention = text.match(/^@(codex|claude)\b/)?.[1] as 'codex' | 'claude' | undefined;
+      const mention = text.match(new RegExp(`^@(${AGENT_IDS.join('|')})\\b`))?.[1] as AgentId | undefined;
       push(id, 'message', 'user', { id: `u${Date.now()}`, kind: 'chat', text, queued, mention });
       if (!queued && !mention && s.config.mode === 'compete' && !s.chosenVariant && s.status === 'awaiting_approval') {
         setTimeout(() => void reviseBoth(id), 300);
@@ -226,7 +226,7 @@ export function createFixtureBackend(): Backend {
       }
       return { ok: true, queued };
     },
-    async upload(_id, name, mime, bytes) { await wait(600); const a: Attachment = { id: `att_${Math.random().toString(36).slice(2, 8)}`, name, mime, size: bytes instanceof Blob ? bytes.size : bytes.byteLength, path: `/home/developer/.lina/attachments/${name}` }; return a; },
+    async upload(_id, name, mime, bytes) { await wait(600); const a: Attachment = { id: `att_${Math.random().toString(36).slice(2, 8)}`, name, mime, size: bytes instanceof Blob ? bytes.size : bytes.byteLength, path: `/home/sam/.lina/attachments/${name}` }; return a; },
     async control(id, action) {
       await wait(250);
       const map: Record<string, Partial<Session>> = { pause: { status: 'paused' }, resume: { status: 'running' }, cancel: { status: 'cancelled', phase: 'cancelled' }, retry: { status: 'running' }, review: { status: 'running', phase: 'reviewing' } };
@@ -239,12 +239,12 @@ export function createFixtureBackend(): Backend {
       const choose = (v: AgentId) => {
         const snap = snapFor(id);
         if (!snap.session.variants?.[v]) throw new Err(`No candidate from ${v}`, 400, 'invalid');
-        const rival: AgentId = v === 'codex' ? 'claude' : 'codex';
+        const rival: AgentId = peerOf(v);
         snap.findings = snap.findings.filter((f: Finding) => f.variant !== rival);
         const w = workspaces.get(id);
         if (w?.[v]) w.main = w[v]!;
         push(id, 'findings', 'user', { findings: snap.findings });
-        push(id, 'message', 'lina', { id: `ch${Date.now()}`, kind: 'notice', text: `You chose **${v === 'codex' ? 'Codex' : 'Claude'}'s version**. Its commits are now the session branch; ${rival === 'codex' ? 'Codex' : 'Claude'}'s findings were dropped. ${rival === 'codex' ? 'Codex' : 'Claude'} reviews from here.` });
+        push(id, 'message', 'lina', { id: `ch${Date.now()}`, kind: 'notice', text: `You chose **${AGENT_LABEL[v]}'s version**. Its commits are now the session branch; ${AGENT_LABEL[rival]}'s findings were dropped. ${AGENT_LABEL[rival]} reviews from here.` });
         return updateSession(id, { chosenVariant: v, headCommit: snap.session.variants[v]!.headCommit, config: { ...snap.session.config, mode: 'pair', developer: v, reviewer: rival } });
       };
       if (b.decision === 'choose') {

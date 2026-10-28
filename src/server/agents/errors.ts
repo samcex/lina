@@ -18,6 +18,7 @@ export interface ErrorExtra {
 const CLI: Record<AgentId, { name: string; bin: string; login: string; install: string }> = {
   codex: { name: 'Codex', bin: 'codex', login: 'codex login', install: 'npm install -g @openai/codex' },
   claude: { name: 'Claude Code', bin: 'claude', login: 'claude auth login', install: 'npm install -g @anthropic-ai/claude-code (or the native installer)' },
+  freebuff: { name: 'Freebuff', bin: 'freebuff', login: 'freebuff login', install: 'npm install -g freebuff' },
 };
 
 const SANDBOX_RE = /\bbwrap:|apply-seccomp|nested userns|user namespaces?|landlock|seccomp|sandbox (?:failed|error|denied|is not available)|Sandbox(?:ing)? (?:failed|unavailable)|unshare failed|Operation not permitted.*namespace/i;
