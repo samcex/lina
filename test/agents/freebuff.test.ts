@@ -213,3 +213,16 @@ describe('models and login', () => {
     expect(models.error).toContain('not found on PATH');
   });
 });
+
+ it('finds a large pasted attachment by unique turn marker despite an empty user bubble', () => {
+   const before = snapshotChats();
+   const marker = 'LINA delegated turn a48a792b-984e-4126-b64a-30384811ee6c';
+   const prompt = marker + '\n\n' + 'Long delegated context. '.repeat(1000);
+   const dir = chat('attachment-chat', {prompt:'(empty chat)'});
+   writeFileSync(join(dir,'chat-messages.json'),JSON.stringify([{id:'u',variant:'user',content:''}]));
+   writeFileSync(join(dir,'run-state.json'),JSON.stringify({sessionState:{messageHistory:[{role:'user',content:[{type:'text',text:'[Pasted Text]\n'+prompt}]}]}}));
+   expect(findNewChat(before,prompt)).toBe(dir);
+   expect(findNewChat(new Set([dir]),prompt)).toBeUndefined();
+   expect(findNewChat(before,prompt.replace('a48a792b','b48a792b'))).toBeUndefined();
+   expect(findNewChat(before,'Long delegated context.')).toBeUndefined();
+ });

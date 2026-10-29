@@ -205,15 +205,26 @@ export function findChatById(id: string, root = freebuffConfigDir()): string | u
   return listChatDirs(root).find((dir) => dir.endsWith(`/${id}`));
 }
 
+/** Large pastes become attachments: their user bubble and firstPrompt can be empty.
+ * The per-turn UUID remains in the persisted provider message history. Never match
+ * arbitrary task text or an unrelated pre-existing chat as a fallback.
+ */
+export function chatContainsTurn(chatDir: string, prompt: string): boolean {
+  if ((readChatMessages(chatDir) ?? []).some(m => m.variant === 'user' && samePrompt(m.content, prompt))) return true;
+  const marker = /^LINA delegated turn [0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}(?=\n|$)/i.exec(prompt)?.[0];
+  if (!marker) return false;
+  return ['run-state.json', 'chat-messages.json'].some(file => {
+    try { return readFileSync(join(chatDir, file), 'utf8').includes(marker); } catch { return false; }
+  });
+}
+
 /** A chat that did not exist before `before` and whose prompt matches `prompt`. */
 export function findNewChat(before: Set<string>, prompt: string, root = freebuffConfigDir()): string | undefined {
   for (const dir of listChatDirs(root)) {
     if (before.has(dir)) continue;
     if (samePrompt(chatFirstPrompt(dir), prompt)) return dir;
     // Projects freebuff only writes chat-messages.json for: check the first user message.
-    const msgs = readChatMessages(dir);
-    const firstUser = msgs?.find((m) => m.variant === 'user')?.content;
-    if (samePrompt(firstUser, prompt)) return dir;
+    if (chatContainsTurn(dir, prompt)) return dir;
   }
   return undefined;
 }
@@ -521,7 +532,7 @@ export class FreebuffAdapter implements AgentAdapter {
         const msgs = readChatMessages(chatDir);
         if (!msgs) continue;
         if (msgs.length < state.baseline) state = emptyTurnState(0);
-        if (!userSeen) userSeen = msgs.some((m) => m.variant === 'user' && samePrompt(m.content, prompt));
+        if (!userSeen) userSeen = chatContainsTurn(chatDir, prompt);
         if (!userSeen && submittedAt && now - submittedAt > 12_000 && submits < 2 && writeStdin) {
           writeStdin(SUBMIT_KEY); submits += 1; submittedAt = now;
         }
