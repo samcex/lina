@@ -226,6 +226,8 @@ export class MockAdapter implements AgentAdapter {
       writeFileSync(p, content);
     };
     switch (step) {
+      case 'model_select': case 'model_select_review':
+        return '```lina-model\n'+JSON.stringify({model:opts.prompt.includes('contains image attachments')?'picker:mock-deep':'picker:mock-fast',reason:'The fixture model meets the task requirements at the appropriate test cost.'})+'\n```';
       case 'goal_completion_audit': case 'goal_completion_repair':
         return '```lina-goal-audit\n'+JSON.stringify({requirements:[{key:'requested-feature',requirement:'Build hello',status:'verified',evidence:'hello.js implementation and the successful node --test result.'}]})+'\n```';
       case 'goal_check':

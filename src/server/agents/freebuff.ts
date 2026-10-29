@@ -1,3 +1,4 @@
+import { FreebuffScreen, operatePicker, preserveModelPreference, withFreebuffLock, freebuffCatalogue } from './freebuff-picker.js';
 import { randomUUID } from 'node:crypto';
 // Freebuff adapter: drives the interactive `freebuff` TUI through a pseudo-terminal
 // and reads the structured chat log the CLI itself persists under its config dir.
@@ -8,7 +9,7 @@ import { randomUUID } from 'node:crypto';
 //  - it tails <config>/projects/<project>/chats/<chat>/chat-messages.json, which the
 //    CLI writes with text/tool blocks and an `isComplete` flag,
 //  - it stops the TUI once the turn is complete (the CLI would otherwise stay open).
-// It cannot report token usage, cannot pin a model per turn, and cannot enforce a
+// It verifies task-specific model picks through the native picker, cannot report token usage, and cannot enforce a
 // read-only reviewer role — freebuff applies its own permissions.
 import { appendFileSync, existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -291,7 +292,7 @@ export function buildFreebuffCommand(opts: { bin: string; cwd: string; resumeId?
   if (opts.resumeId) argv.push('--continue', opts.resumeId);
   argv.push('--cwd', opts.cwd);
   const line = argv.map((a) => (a.includes(' ') || a.includes("'") ? shellQuote(a) : a)).join(' ');
-  return { cmd: 'script', args: ['-qfc', line, '/dev/null'] };
+  return { cmd: 'script', args: ['-qfc', 'stty cols 160 rows 70; '+line, '/dev/null'] };
 }
 
 /** The TUI is accepting input once it has drawn its composer. */
@@ -394,6 +395,11 @@ export class FreebuffAdapter implements AgentAdapter {
   }
 
   async runTurn(opts: TurnOptions, onEvent: (e: AgentStreamEvent) => void): Promise<TurnResult> {
+    try { return await withFreebuffLock(opts.signal, () => this.runLocked(opts,onEvent)); }
+    catch (e) { return {ok:false,text:'',usage:{},durationMs:0,error:opts.signal.aborted ? classifyError('freebuff','',{aborted:true}) : {code:'model_unavailable',message:String((e as Error).message)}}; }
+  }
+
+  private async runLocked(opts: TurnOptions, onEvent: (e: AgentStreamEvent) => void): Promise<TurnResult> {
     const startedAt = Date.now();
     // Freebuff has no system-prompt flag: include the coordinator's permissions and full goal.
     const prompt = [`LINA delegated turn ${randomUUID()}`, opts.systemPrompt, opts.prompt].filter(Boolean).join('\n\n');
@@ -417,6 +423,11 @@ export class FreebuffAdapter implements AgentAdapter {
     const onOuterAbort = () => controller.abort();
     opts.signal.addEventListener('abort', onOuterAbort, { once: true });
 
+    const screen = new FreebuffScreen();
+    const preference = preserveModelPreference(freebuffConfigDir());
+    let selectedModel: string | undefined;
+    let selectionError: string | undefined;
+    let selectionAttempted = false;
     let ready = false;
     let screenTail = '';
     let writeStdin: ((s: string) => void) | undefined;
@@ -446,6 +457,7 @@ export class FreebuffAdapter implements AgentAdapter {
       },
       onData: (text) => {
         // Raw window; ANSI is stripped only when it is tested, so sequences split across chunks still match.
+        screen.feed(text);
         screenTail = (screenTail + text).slice(-8000);
       },
     });
@@ -458,7 +470,17 @@ export class FreebuffAdapter implements AgentAdapter {
     let lastSig = '';
     let warned = false;
     try {
-      while (Date.now() < deadline) {
+      if(opts.model.startsWith('picker:')) {
+        try {
+          while(!writeStdin&&!controller.signal.aborted)await sleep(50);
+          if(!writeStdin)throw new Error('Freebuff did not start');
+          const picked=await operatePicker(screen,writeStdin,controller.signal,opts.model);
+          selectedModel=picked[0]?.label;
+          emit([{t:'started',model:selectedModel}]);
+        } catch(e) {selectionError=(e as Error).message;}
+        finally {preference();selectionAttempted=true;}
+      }
+      while (!selectionError && Date.now() < deadline) {
         await sleep(POLL_MS);
         const now = Date.now();
         if (controller.signal.aborted) { outcome = 'aborted'; break; }
@@ -531,16 +553,21 @@ export class FreebuffAdapter implements AgentAdapter {
     }
 
     const proc = await procPromise;
+    if(selectionAttempted)preference();
+    const footer=screen.text().split('\n').find(l=>l.includes('/model to change'));
+    selectedModel=footer?.trim().split(/[•·]/)[0].trim() || selectedModel;
+    screen.dispose();
     const durationMs = Date.now() - startedAt;
     const chatId = chatDir ? chatDir.split('/').pop() : undefined;
     const base = {
       text: state.text,
       ...(chatId || opts.resumeId ? { providerSessionId: chatId ?? opts.resumeId } : {}),
-      model: opts.model,
+      model: selectedModel || opts.model,
       usage: { turns: 1 } as Partial<UsageTotals>,
       durationMs,
     };
 
+    if (selectionError && !opts.signal.aborted) return {ok:false,...base,error:{code:'model_unavailable',message:selectionError}};
     if (opts.signal.aborted) {
       return { ok: false, ...base, error: classifyError('freebuff', '', { aborted: true }) };
     }
@@ -581,7 +608,7 @@ export class FreebuffAdapter implements AgentAdapter {
 
 // ───────────────────────────── discovery / validation ─────────────────────────────
 
-/** freebuff has no `--model` flag; it runs whatever model the CLI is configured with. */
+/** Native picker choices are verified per turn; the normal CLI preference remains available. */
 export function readFreebuffSettings(root = freebuffConfigDir()): { model?: string; mode?: string } {
   const s = readJson<{ freebuffModel?: string; mode?: string }>(join(root, 'settings.json'));
   return { ...(typeof s?.freebuffModel === 'string' ? { model: s.freebuffModel } : {}), ...(typeof s?.mode === 'string' ? { mode: s.mode } : {}) };
@@ -596,13 +623,16 @@ export async function discoverFreebuffModels(): Promise<AgentModels> {
   if (!(await which(freebuffBin()))) return { ...base, error: 'freebuff CLI not found on PATH' };
   const s = readFreebuffSettings();
   const model = s.model ?? 'auto';
+  const catalogue=await freebuffCatalogue(freebuffBin(),process.cwd(),freebuffConfigDir()).catch(()=>[]);
+  const selectable=catalogue.filter(r=>!r.locked);
   return {
     ...base,
     installed: true,
     defaultModel: model,
     models: [
-      { id: model, label: model, description: 'Model selected in the Freebuff CLI (/model). LINA cannot override it per turn.', source: 'catalog' },
-      ...(model !== 'auto' ? [{ id: 'auto', label: 'auto', description: 'Use whatever model the Freebuff CLI has selected.', source: 'alias' as const }] : []),
+      ...selectable.map(r=>({id:r.id,label:r.label,description:r.description,source:'catalog' as const})),
+      { id: model, label: model, description: 'Normal model selected in Freebuff. Task-specific picker choices do not change this preference.', source: 'catalog' },
+      ...(model !== 'auto' ? [{ id: 'auto', label: 'auto', description: 'Let supervisors select a model per delegated task; otherwise use the normal CLI model.', source: 'alias' as const }] : []),
     ],
     ...(freebuffLoggedIn() ? {} : { error: 'freebuff is not logged in (run `freebuff login`)' }),
   };
@@ -613,8 +643,13 @@ export async function validateFreebuffModel(model: string): Promise<ModelValidat
   if (!(await which(freebuffBin()))) return { ok: false, checkedAt, error: 'freebuff CLI not found on PATH', code: 'cli_missing' };
   if (!freebuffLoggedIn()) return { ok: false, checkedAt, error: 'freebuff is not logged in', code: 'auth' };
   const configured = readFreebuffSettings().model;
+  if(model.startsWith('picker:')) {
+    const rows=await freebuffCatalogue(freebuffBin(),process.cwd(),freebuffConfigDir()).catch(()=>[]);
+    const row=rows.find(r=>r.id===model);
+    return row&&!row.locked ? {ok:true,checkedAt,resolvedModel:row.label} : {ok:false,checkedAt,code:'model_unavailable',error:'Model is not selectable in the current Freebuff picker'};
+  }
   if (model !== 'auto' && configured && model !== configured) {
-    return { ok: false, checkedAt, error: `freebuff runs its configured model (${configured}); switch it in the Freebuff CLI with /model`, code: 'model_unavailable' };
+    return { ok: false, checkedAt, error: `freebuff runs its configured model (${configured}); choose an available picker model with /models freebuff`, code: 'model_unavailable' };
   }
   return { ok: true, checkedAt, ...(configured ? { resolvedModel: configured } : {}) };
 }

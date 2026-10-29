@@ -8,12 +8,14 @@ const {startServer}=await import('../../src/server/daemon.js');
 const {LinaClient}=await import('../../src/shared/client.js');
 const {MockAdapter}=await import('../../src/server/agents/mock.js');
 const {setAdapterOverride}=await import('../../src/server/agents/index.js');
-const calls:{session:string;agent:AgentId;step:string;access:string}[]=[];
+const calls:{session:string;agent:AgentId;step:string;access:string;model:string}[]=[];
 const limited=new Set<string>();
+const stronger=new Set<string>();
 setAdapterOverride((agent,ctx)=>({id:agent,async runTurn(opts,emit){
  const step=/lina:step=(\w+)/.exec(opts.prompt)?.[1]??'';
- calls.push({session:ctx.sessionId!,agent,step,access:opts.access});
+ calls.push({session:ctx.sessionId!,agent,step,access:opts.access,model:opts.model});
  if(limited.has(ctx.sessionId!)&&agent!=='freebuff')return {ok:false,text:'',usage:{},durationMs:0,error:{code:'rate_limited',message:'Usage limit',retryAt:Date.now()+60000}};
+ if(stronger.has(ctx.sessionId!)&&step==='model_select_review')return {ok:true,text:'```lina-model\n'+JSON.stringify({model:'picker:mock-deep',reason:'The delegated task needs deeper reasoning; the stronger model is appropriate.'})+'\n```',usage:{},durationMs:0};
  return new MockAdapter(agent,{delayMs:0}).runTurn(opts,emit);
 }}));
 let srv:Awaited<ReturnType<typeof startServer>>,api:InstanceType<typeof LinaClient>;
@@ -62,4 +64,24 @@ it('retains both supervisor reviews during limits and runs them automatically af
  const own=calls.filter(c=>c.session===s.id&&c.step==='review');
  for(const agent of ['codex','claude'])expect(own.some(c=>c.agent===agent)).toBe(true);
  expect((await api.session(s.id)).session.goalStatus).toBe('complete');
+});
+
+it('lets Codex propose and Claude replace the per-task model before Freebuff writes',async()=>{
+ const project=await api.addProject({path:makeRepo()});
+ const s=await api.createSession({projectId:project.id,config:{mock:true,mode:'custom',team:DELEGATION_TEAM,interactionMode:'workflow',goal:'Build hello'}});
+ stronger.add(s.id);await api.send(s.id,'Build hello');
+ await waitUntil(()=>srv.manager.db.getSession(s.id)?.status==='completed',15000);
+ const own=calls.filter(c=>c.session===s.id);
+ expect(own.some(c=>c.agent==='codex'&&c.step==='model_select'&&c.access==='read')).toBe(true);
+ expect(own.some(c=>c.agent==='claude'&&c.step==='model_select_review'&&c.access==='read')).toBe(true);
+ expect(own.find(c=>c.agent==='freebuff'&&c.step==='implement')?.model).toBe('picker:mock-deep');
+ const decision=srv.manager.db.getSessionState<any>(s.id)!.freebuffModelDecision;
+ expect(decision).toMatchObject({model:'picker:mock-deep',proposedBy:'codex',reviewedBy:'claude'});
+});
+it('honors an explicitly pinned Freebuff model without automatic reselection',async()=>{
+ const project=await api.addProject({path:makeRepo()});
+ const s=await api.createSession({projectId:project.id,config:{mock:true,mode:'custom',team:DELEGATION_TEAM,interactionMode:'workflow',goal:'Build hello',models:{freebuff:{model:'pinned-model'}} as any}});
+ await api.send(s.id,'Build hello');await waitUntil(()=>srv.manager.db.getSession(s.id)?.status==='completed',15000);
+ const own=calls.filter(c=>c.session===s.id);expect(own.some(c=>c.step==='model_select')).toBe(false);
+ expect(own.find(c=>c.agent==='freebuff'&&c.step==='implement')?.model).toBe('pinned-model');
 });

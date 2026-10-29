@@ -40,3 +40,9 @@ it('keeps raw internal blocks out of live agent panels',()=>{
   const v=viewFromSnapshot(snapshot());v.streams={control:{agent:'codex',text:'Checking.\n```lina-review\n{"verdict":'}};
   expect(panelUpdate(v,'codex')?.text).toBe('Checking.');
 });
+
+it('hides model-selection control blocks while keeping the readable rationale',()=>{
+ const text='Choose a fast model for this small edit.\n```lina-model\n{"model":"picker:fast","reason":"small edit"}\n```';
+ expect(agentDisplayText(text)).toBe('Choose a fast model for this small edit.');
+ expect(agentDisplayText('Choosing.\n```lina-mo',true)).toBe('Choosing.');
+});

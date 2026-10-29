@@ -1,7 +1,7 @@
 // LINA shared domain model. This file is the contract between the daemon,
 // the terminal UI and the web UI. Keep it dependency-free (runs in Node and browser).
 
-export const LINA_VERSION = '0.1.13';
+export const LINA_VERSION = '0.1.14';
 
 export type AgentId = 'codex' | 'claude' | 'freebuff';
 export const AGENT_IDS: AgentId[] = ['codex', 'claude', 'freebuff'];

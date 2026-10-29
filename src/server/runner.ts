@@ -1,3 +1,7 @@
+import { createHash } from 'node:crypto';
+import { freebuffCatalogue } from './agents/freebuff-picker.js';
+import { freebuffBin, freebuffConfigDir } from './agents/freebuff.js';
+import { parseModelDecision, modelSelectionPrompt } from './model-selection.js';
 import { which } from './agents/proc.js';
 // Runner: the per-session playbook state machine.
 //  team pipeline (pair / architect / solo / custom, driven by teamOf(config)):
@@ -48,6 +52,7 @@ export interface QueuedMessage {
 interface DeferredReview { at: number; base: string; reviewer: AgentId; writer: AgentId; next?: DeferredReview }
 
 export interface RunnerState {
+  freebuffModelDecision?: {key:string;model:string;reason:string;proposedBy?:AgentId;reviewedBy?:AgentId};
   goalRetryAt?: number;
   goalResumePending?: boolean;
   goalProtocolAttempts?: number;
@@ -186,6 +191,8 @@ class ProviderLimited extends Error {
   constructor(public agent: AgentId, message: string, public partial?: string, public files?: string[], public resetAt?: number, public kind: 'capacity' | 'usage' | 'recovery' | 'configuration' = 'usage') { super(message); }
 }
 interface TurnSpec {
+  modelOverride?: string;
+  modelSelection?: boolean;
   agent: AgentId; role: Role; phase: Phase; access: 'read' | 'write'; prompt: string; deliver: QueuedMessage[];
   extraAttachments?: Attachment[]; variant?: AgentId; requestedAgent?: AgentId; reviewWriter?: AgentId; reviewScope?: AgentId;
 }
@@ -1906,6 +1913,31 @@ Use LINA_GOAL_COMPLETE, LINA_GOAL_CONTINUE: <remaining in-scope work>, or LINA_G
 
   // ── turn execution ────────────────────────────────────────────────────
 
+  private async selectFreebuffModel(spec:TurnSpec):Promise<string|undefined>{
+    if(this.cfg.models.freebuff.model!=='auto')return;
+    const key=createHash('sha256').update(JSON.stringify([this.state.task,this.state.plan,this.state.critique,spec.prompt])).digest('hex');
+    if(this.state.freebuffModelDecision?.key===key)return this.state.freebuffModelDecision.model;
+    const mock=!!this.cfg.mock||!!this.session.mock;
+    const needsImages=[...(this.state.taskAttachments??[]),...(spec.extraAttachments??[]),...spec.deliver.flatMap(m=>m.attachments??[])].some(a=>a.mime.startsWith('image/'));
+    const catalogue=mock ? [
+      {id:'picker:mock-fast',label:'Mock Fast',description:'Fast fixture model for simple changes',locked:false,multimodal:false,multiplier:1},
+      {id:'picker:mock-deep',label:'Mock Deep',description:'Deep reasoning fixture model with images',locked:false,multimodal:true,multiplier:3},
+    ] : await freebuffCatalogue(freebuffBin(),this.wsOf(spec.variant),freebuffConfigDir()).catch(()=>[]);
+    const rows=catalogue.filter(r=>!needsImages||r.multimodal);
+    if(!rows.some(r=>!r.locked)){this.notice('Freebuff model catalogue could not be read. Keeping its configured model for this turn.');return;}
+    const task=[needsImages?'The delegated task contains image attachments; require image input support.':undefined,this.cfg.goal,this.state.task,this.state.plan,this.state.critique,spec.prompt].filter(Boolean).join('\n\n');
+    const proposer=this.team.planner&&this.team.planner!=='freebuff'?this.team.planner:'codex';
+    const judge=this.team.planCritic&&this.team.planCritic!==proposer&&this.team.planCritic!=='freebuff'?this.team.planCritic:proposer==='codex'?'claude':'codex';
+    const proposal=await this.turn({agent:proposer,role:'reviewer',phase:'planning',access:'read',modelSelection:true,deliver:[],prompt:'<!-- lina:step=model_select round=0 -->\n'+modelSelectionPrompt(task,rows)});
+    let choice=parseModelDecision(proposal.text,rows);
+    if(!choice){this.notice(`${proposal.agent} did not return a valid model choice. Keeping Freebuff's configured model.`);return;}
+    const review=await this.turn({agent:judge,role:'reviewer',phase:'plan_review',access:'read',modelSelection:true,deliver:[],prompt:'<!-- lina:step=model_select_review round=0 -->\n'+modelSelectionPrompt(task,rows,choice)});
+    const reviewed=parseModelDecision(review.text,rows);if(reviewed)choice=reviewed;
+    this.state.freebuffModelDecision={key,...choice,proposedBy:proposal.agent,...(reviewed?{reviewedBy:review.agent}:{})};
+    this.notice(`Freebuff model: ${rows.find(r=>r.id===choice!.model)!.label}. Proposed by ${proposal.agent}${reviewed?`, reviewed by ${review.agent}`:''}. ${choice.reason}`);
+    this.persist();return choice.model;
+  }
+
   /** Immediate bounded takeover; the failed provider is not polled again until reset. */
   private async turn(spec: TurnSpec): Promise<{ text: string; result: TurnResult; msgId: string; model: string; change?: TurnChange; agent: AgentId }> {
     let continuation = '';
@@ -1924,9 +1956,13 @@ Use LINA_GOAL_COMPLETE, LINA_GOAL_CONTINUE: <remaining in-scope work>, or LINA_G
       if (takeover) this.notice(`${this.state.providerLimits?.[spec.agent]?.kind==='configuration' ? `${spec.agent} needs its provider setup corrected` : this.state.providerLimits?.[spec.agent]?.kind==='recovery' ? `${spec.agent} encountered a temporary failure` : this.state.providerLimits?.[spec.agent]?.kind==='capacity' ? `${spec.agent}'s model is temporarily at capacity` : `A usage limit was reported for ${spec.agent}`}; ${agent} is taking over automatically in the same workspace.`);
       const prefix = takeover ? `Provider takeover: you are ${agent}, continuing ${spec.agent}'s ${spec.role} work in ${this.wsOf(spec.variant)}. Keep the same task, role, candidate/worktree and owner permissions. Inspect current files and completed actions first; preserve partial edits and do not repeat completed steps. Do not assume an old provider's conversation ID or claim another agent's work.\nCurrent request: ${this.state.task ?? ''}\nPlan: ${this.state.plan ?? ''}\nRevision: ${this.state.revisionRequest ?? ''}\n${continuation}\n\n` : '';
       const attemptStarted = Date.now();
-      try { return await this.runTurn({ ...spec, agent, requestedAgent: spec.agent, prompt: prefix + spec.prompt }); }
+      try {
+        const modelOverride=agent==='freebuff'&&spec.access==='write'&&!spec.modelSelection ? await this.selectFreebuffModel(spec) : undefined;
+        return await this.runTurn({ ...spec, agent, modelOverride, requestedAgent: spec.agent, prompt: prefix + spec.prompt });
+      }
       catch (error) {
         if (!(error instanceof ProviderLimited)) throw error;
+        if(agent==='freebuff'&&error.kind==='configuration'){this.state.freebuffModelDecision=undefined;import('./agents/freebuff-picker.js').then(m=>m.invalidateFreebuffCatalogue()).catch(()=>{});}
         const limits = this.deps.events.liveSnapshot(this.id).rateLimits[agent];
         const resets = error.kind!=='usage' || (limits?.observedAt ?? 0) < attemptStarted ? [] : Object.values(limits?.windows ?? {}).filter((w) => w.status === 'rejected' || w.status === 'blocked' || w.status === 'denied' || (w.utilization >= 1 && w.status !== 'allowed')).map((w) => w.resetsAt ?? 0).filter((t) => t > Date.now());
         const recentReset = error.kind==='usage' && error.resetAt !== undefined && error.resetAt <= Date.now() && error.resetAt > Date.now()-12*3600000;
@@ -1934,7 +1970,7 @@ Use LINA_GOAL_COMPLETE, LINA_GOAL_CONTINUE: <remaining in-scope work>, or LINA_G
         this.state.providerLimits ??= {};
         this.state.providerLimits[agent] = { until: resets.length ? Math.max(...resets) : Date.now() + (error.kind==='configuration' ? 5*60_000 : error.kind!=='usage' || recentReset ? Math.min(120,15*2**Math.min(this.state.limitRetryAttempts??0,3))*1000 : Math.min(60, 5 * 2 ** Math.min(this.state.limitRetryAttempts ?? 0, 4)) * 60_000), message: error.message, kind:error.kind, resetAt:error.resetAt };
         const writer = this.state.lastWriters?.[spec.variant ?? 'main'];
-        if (spec.phase === 'reviewing' && writer && spec.agent !== writer) this.deferIndependentReview(writer, spec.agent);
+        if (!spec.modelSelection && spec.phase === 'reviewing' && writer && spec.agent !== writer) this.deferIndependentReview(writer, spec.agent);
         continuation = `Previous provider's partial reply: ${error.partial ?? ''}\nFiles already changed: ${error.files?.join(', ') ?? '(inspect the current workspace)'}`;
         this.agentStatus(agent, 'error', error.message, spec.role);
         this.persist();
@@ -1961,8 +1997,8 @@ Use LINA_GOAL_COMPLETE, LINA_GOAL_CONTINUE: <remaining in-scope work>, or LINA_G
     if (this.cancelRequested) throw new Halt('cancel');
     const { agent, role, phase, variant } = spec;
     const cwd = this.wsOf(variant);
-    const key = providerKey(agent, role, variant) + (spec.requestedAgent && spec.requestedAgent !== agent ? `:for-${spec.requestedAgent}` : '') + (spec.reviewScope ? `:focus-${spec.reviewScope}` : '');
-    const selfReview = role === 'reviewer' && (spec.reviewWriter ?? this.state.lastWriters?.[variant ?? 'main']) === agent && (agent !== this.team.developer || Object.values(this.state.providerLimits ?? {}).some((limit) => limit && limit.until > Date.now()));
+    const key = providerKey(agent, role, variant) + (spec.requestedAgent && spec.requestedAgent !== agent ? `:for-${spec.requestedAgent}` : '') + (spec.reviewScope ? `:focus-${spec.reviewScope}` : '') + (spec.modelSelection ? ':model-selection' : '') + (spec.modelOverride ? ':model-'+spec.modelOverride : '');
+    const selfReview = !spec.modelSelection && role === 'reviewer' && (spec.reviewWriter ?? this.state.lastWriters?.[variant ?? 'main']) === agent && (agent !== this.team.developer || Object.values(this.state.providerLimits ?? {}).some((limit) => limit && limit.until > Date.now()));
     if (selfReview) {
       this.state.selfReviewed = true;
       this.deferIndependentReview(agent, spec.requestedAgent && spec.requestedAgent !== agent ? spec.requestedAgent : other(agent));
@@ -1971,7 +2007,7 @@ Use LINA_GOAL_COMPLETE, LINA_GOAL_CONTINUE: <remaining in-scope work>, or LINA_G
     }
     const settings = this.deps.settings();
     const fullAccess = settings.accessMode === 'full';
-    const choice = this.cfg.models[agent];
+    const choice = spec.modelOverride ? {...this.cfg.models[agent],model:spec.modelOverride} : this.cfg.models[agent];
     const mock = !!this.session.mock || !!this.cfg.mock;
     const adapter = await getAdapter(agent, { mock, sessionId: this.id });
     const resumeId = this.state.providers[key];
@@ -2075,7 +2111,7 @@ Use LINA_GOAL_COMPLETE, LINA_GOAL_CONTINUE: <remaining in-scope work>, or LINA_G
           fullAccess,
           network: fullAccess || !!this.cfg.network,
           resumeId,
-          systemPrompt: (this.cfg.goal ? 'This is an autonomous, owner-approved goal. Continue implementation, bounded local reproduction/diagnostics, testing, review and explicitly requested publication within the saved goal and existing project permissions without asking for routine approval. Choose reasonable local investigation parameters yourself; do not ask whether to run a bounded in-scope repro. Use the accepted task and plan when interpreting continuation requests. Fix or reassess review findings yourself, including minor findings. Ask the owner only for genuinely missing facts/credentials, unavailable external prerequisites, or decisions that change scope or override explicit constraints. Do not treat a review round limit or a formatting error as an owner decision.\n' + `Full owner goal: ${this.cfg.goal}\nCurrent approved item: ${JSON.stringify(this.state.goalCurrentTask ?? null)}\nRequirement evidence ledger: ${JSON.stringify(this.state.goalRequirements ?? [])}\nDeferred issues: ${JSON.stringify(this.state.goalDeferred ?? [])}\nContinue other approved unblocked work before parking the whole goal on a deferred issue.\n` : '') + (role === 'developer' ? `${P.developerSystemPrompt(this.direct)}\n${P.previewInstructions(this.id)}` : P.reviewerSystemPrompt()) + (settings.reaEnabled ? '\nREA MCP is enabled for this turn. Use its available MCP tools directly rather than treating /rea as a shell command. Use REA tools needed for your assigned work. Full access applies to all roles. During review, inspect independently and leave project source changes to the developer; analysis caches and verification artifacts are permitted. Honor explicit owner constraints for the project and hardware.' : ''),
+          systemPrompt: (this.cfg.goal ? 'This is an autonomous, owner-approved goal. Continue implementation, bounded local reproduction/diagnostics, testing, review and explicitly requested publication within the saved goal and existing project permissions without asking for routine approval. Choose reasonable local investigation parameters yourself; do not ask whether to run a bounded in-scope repro. Use the accepted task and plan when interpreting continuation requests. Fix or reassess review findings yourself, including minor findings. Ask the owner only for genuinely missing facts/credentials, unavailable external prerequisites, or decisions that change scope or override explicit constraints. Do not treat a review round limit or a formatting error as an owner decision.\n' + `Full owner goal: ${this.cfg.goal}\nCurrent approved item: ${JSON.stringify(this.state.goalCurrentTask ?? null)}\nRequirement evidence ledger: ${JSON.stringify(this.state.goalRequirements ?? [])}\nDeferred issues: ${JSON.stringify(this.state.goalDeferred ?? [])}\nContinue other approved unblocked work before parking the whole goal on a deferred issue.\n` : '') + (spec.modelSelection ? 'You select and assess a model for delegated implementation. Inspect only what is needed to judge task requirements. Do not edit source, implement the task, or perform a code review. Return the requested lina-model decision block.' : role === 'developer' ? `${P.developerSystemPrompt(this.direct)}\n${P.previewInstructions(this.id)}` : P.reviewerSystemPrompt()) + (settings.reaEnabled ? '\nREA MCP is enabled for this turn. Use its available MCP tools directly rather than treating /rea as a shell command. Use REA tools needed for your assigned work. Full access applies to all roles. During review, inspect independently and leave project source changes to the developer; analysis caches and verification artifacts are permitted. Honor explicit owner constraints for the project and hardware.' : ''),
           extraReadDirs: existsSync(attDir) ? [attDir] : undefined,
           images: images.length ? images : undefined,
           osSandbox: agent === 'claude' ? (fullAccess ? false : await this.claudeSandbox(settings, mock)) : undefined,

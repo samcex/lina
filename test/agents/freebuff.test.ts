@@ -105,13 +105,13 @@ describe('pty command', () => {
     const { cmd, args } = buildFreebuffCommand({ bin: 'freebuff', cwd: '/tmp/a b/c' });
     expect(cmd).toBe('script');
     expect(args[0]).toBe('-qfc');
-    expect(args[1]).toBe("freebuff --trust-agents --cwd '/tmp/a b/c'");
+    expect(args[1]).toBe("stty cols 160 rows 70; freebuff --trust-agents --cwd '/tmp/a b/c'");
     expect(args[2]).toBe('/dev/null');
   });
 
   it('resumes a chat and submits with bracketed paste plus Enter', () => {
     const { args } = buildFreebuffCommand({ bin: '/opt/freebuff', cwd: '/w', resumeId: '2026-10-27T15-45-17.562Z', trustAgents: false });
-    expect(args[1]).toBe('/opt/freebuff --continue 2026-10-27T15-45-17.562Z --cwd /w');
+    expect(args[1]).toBe('stty cols 160 rows 70; /opt/freebuff --continue 2026-10-27T15-45-17.562Z --cwd /w');
     expect(pasteKeystrokes('line 1\nline 2')).toBe('\x1b[200~line 1\nline 2\x1b[201~');
     expect(SUBMIT_KEY).toBe('\r');
   });
