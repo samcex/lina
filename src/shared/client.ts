@@ -141,7 +141,7 @@ export class LinaClient {
   stopPreview(id: string, preview: string) { return this.req<Preview>('POST', `/api/sessions/${id}/previews/${encodeURIComponent(preview)}/stop`, {}); }
   previewLogs(id: string, preview: string) { return this.req<{ output: string }>('GET', `/api/sessions/${id}/previews/${encodeURIComponent(preview)}/logs`); }
   send(id: string, text: string, opts: { attachments?: string[]; interrupt?: boolean } = {}) {
-    return this.req<{ ok: true; queued: boolean }>('POST', `/api/sessions/${id}/messages`, { text, ...opts });
+    return this.req<{ ok: true; queued: boolean; takeover?: AgentId }>('POST', `/api/sessions/${id}/messages`, { text, ...opts });
   }
   upload(id: string, name: string, mime: string, bytes: Uint8Array | Blob) {
     return this.req<Attachment>('POST', `/api/sessions/${id}/attachments`, bytes, { 'x-filename': encodeURIComponent(name), 'content-type': mime || 'application/octet-stream' });

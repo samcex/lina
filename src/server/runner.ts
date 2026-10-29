@@ -52,6 +52,8 @@ export interface QueuedMessage {
 interface DeferredReview { at: number; base: string; reviewer: AgentId; writer: AgentId; next?: DeferredReview }
 
 export interface RunnerState {
+  pendingTakeover?: {agent:AgentId;at:number;attachments?:Attachment[]};
+  takeoverContext?: string;
   freebuffModelDecision?: {key:string;model:string;reason:string;proposedBy?:AgentId;reviewedBy?:AgentId};
   goalRetryAt?: number;
   goalResumePending?: boolean;
@@ -332,6 +334,7 @@ export class SessionRunner {
   /** Next durable automatic action; active turns are never interrupted by the timer. */
   get automaticAt(): number | undefined {
     if (this.state.automaticDisabled || this.busy) return;
+    if (this.state.pendingTakeover) return this.state.pendingTakeover.at;
     if (this.cfg.goal && this.state.goalResumePending) return this.state.goalRetryAt ??= Date.now() + 1000;
     if (this.cfg.goal && this.state.goalRetryAt && ['failed','interrupted'].includes(this.session.status)) return this.state.goalRetryAt;
     if (this.state.limitRetryPending && ['failed','interrupted'].includes(this.session.status)) return this.state.limitRetryAt ??= Date.now() + 1000;
@@ -342,6 +345,7 @@ export class SessionRunner {
     const at = this.automaticAt;
     if (at === undefined || at > now) return;
     this.deps.assertCanStart?.();
+    if(this.state.pendingTakeover){this.applyTakeover();this.resume();return;}
     if (this.cfg.goal && this.state.goalResumePending) {
       this.notice('The project is available. Continuing the queued goal automatically.');
       this.resume();
@@ -511,6 +515,51 @@ export class SessionRunner {
     this.start();
   }
 
+  assertTakeover():void {
+    if(this.cfg.mode==='parallel'||this.cfg.mode==='compete')throw new LinaError('Takeover applies to a shared task, not separate parallel/competing worktrees. Choose the candidate or finish integration first.','bad_state',409);
+    if(!this.state.task&&!this.cfg.goal)throw new LinaError('There is no current task to take over. Send the task first.','bad_state',409);
+  }
+
+  /** Explicit owner handoff: never turn "take over" into a new task or a consult. */
+  requestTakeover(agent:AgentId,attachments?:Attachment[]):boolean {
+    this.assertTakeover();
+    const busy=this.busy;
+    this.state.pendingTakeover={agent,at:Date.now(),...(attachments?.length?{attachments}:{})};
+    this.state.automaticDisabled=false;this.state.goalNeedsInput=false;
+    this.pauseRequested=false;
+    this.notice(`${agent} takeover requested. ${busy?'The current turn will finish first; the handoff then happens automatically.':'Continuing the saved task automatically.'} Existing files, goal, plan, findings and queued messages are preserved.`);
+    this.persist();
+    return busy;
+  }
+
+  private applyTakeover():void {
+    const pending=this.state.pendingTakeover;if(!pending)return;
+    const previous=this.team;const agent=pending.agent;
+    const reviewers=[...new Set([...previous.reviewers,previous.developer,...AGENT_IDS])].filter(a=>a!==agent).slice(0,2);
+    const oldDeveloper=previous.developer;
+    if(this.cfg.mode==='solo'){this.cfg.developer=agent;this.cfg.reviewer=reviewers[0];}
+    else {
+      this.cfg.mode='custom';this.cfg.developer=agent;this.cfg.reviewer=reviewers[0];
+      this.cfg.team={...previous,developer:agent,reviewers};
+    }
+    this.state.task ??= this.cfg.goal;
+    this.state.takeoverContext=`Owner-requested takeover: you are ${agent}, continuing ${oldDeveloper}'s existing task in ${this.ws}. Keep the full saved objective, accepted plan, constraints, open findings and pending owner instructions. Inspect current files and diff first; preserve partial edits, staging and completed work. Continue only what remains, without repeating completed actions. The handoff command itself is not a new objective. Previous developer's last report (verify it against files):\n${(this.state.lastDeveloperText??'(no final report; inspect partial work)').slice(-12000)}`;
+    if(pending.attachments?.length)this.state.taskAttachments=[...new Map([...(this.state.taskAttachments??[]),...pending.attachments].map(a=>[a.id,a])).values()];
+    this.state.pendingTakeover=undefined;this.state.consult=undefined;this.state.consultBase=undefined;
+    this.state.failedStep=undefined;this.state.goalRetryAt=undefined;this.state.goalResumePending=false;
+    this.state.limitRetryAt=undefined;this.state.limitRetryPending=false;
+    this.state.deferredReviewRunning=false;this.state.freebuffModelDecision=undefined;
+    this.state.lastTest=undefined;this.state.lastTestCommit=undefined;
+    this.state.final=undefined;this.state.unparsedReview=false;this.state.maxRoundsHit=false;
+    this.state.roundBase=this.state.round;this.state.done=[];
+    if(this.cfg.goal)this.state.goalStatus='working';
+    this.setStep(this.conversational?'chat':!this.state.plan&&this.team.planner?'plan':this.state.findings.some(f=>ANSWERABLE.includes(f.status))?'revise':'implement');
+    this.session.status='interrupted';
+    for(const a of AGENT_IDS)this.agentStatus(a,'idle',undefined,this.roleOf(a));
+    this.notice(`${agent} now owns implementation of the existing task. ${this.cfg.mode==='solo'?'Solo mode is preserved.':`Independent reviewers: ${reviewers.join(' + ')}.`} Genuine provider limits still apply.`);
+    this.persist();
+  }
+
   enqueue(m: Omit<QueuedMessage, 'deliveredTo' | 'ts'>): void {
     this.state.queue.push({ ...m, ts: Date.now(), deliveredTo: [] });
     this.persist();
@@ -533,6 +582,7 @@ export class SessionRunner {
 
   async cancel(): Promise<void> {
     const scheduled = this.automaticAt !== undefined;
+    this.state.pendingTakeover=undefined;
     this.stopAutomatic(); this.state.limitRetryPending = false; this.state.independentReviewDismissed = true;
     if (!this.loop) { if (scheduled) this.markCancelled(); else this.persist(); return; }
     this.cancelRequested = true;
@@ -709,6 +759,7 @@ export class SessionRunner {
         this.setStatus('paused');
         return;
       }
+      if(this.state.pendingTakeover){this.applyTakeover();this.setStatus('running');}
       const step = this.state.step;
       try {
         if (this.state.consult) { await this.stepConsult(); continue; }
@@ -1925,7 +1976,7 @@ Use LINA_GOAL_COMPLETE, LINA_GOAL_CONTINUE: <remaining in-scope work>, or LINA_G
     ] : await freebuffCatalogue(freebuffBin(),this.wsOf(spec.variant),freebuffConfigDir()).catch(()=>[]);
     const rows=catalogue.filter(r=>!needsImages||r.multimodal);
     if(!rows.some(r=>!r.locked)){this.notice('Freebuff model catalogue could not be read. Keeping its configured model for this turn.');return;}
-    const task=[needsImages?'The delegated task contains image attachments; require image input support.':undefined,this.cfg.goal,this.state.task,this.state.plan,this.state.critique,spec.prompt].filter(Boolean).join('\n\n');
+    const task=[needsImages?'The delegated task contains image attachments; require image input support.':undefined,this.cfg.goal,this.state.task,this.state.plan,this.state.critique,this.state.takeoverContext,spec.prompt].filter(Boolean).join('\n\n');
     const proposer=this.team.planner&&this.team.planner!=='freebuff'?this.team.planner:'codex';
     const judge=this.team.planCritic&&this.team.planCritic!==proposer&&this.team.planCritic!=='freebuff'?this.team.planCritic:proposer==='codex'?'claude':'codex';
     const proposal=await this.turn({agent:proposer,role:'reviewer',phase:'planning',access:'read',modelSelection:true,deliver:[],prompt:'<!-- lina:step=model_select round=0 -->\n'+modelSelectionPrompt(task,rows)});
@@ -2102,7 +2153,7 @@ Use LINA_GOAL_COMPLETE, LINA_GOAL_CONTINUE: <remaining in-scope work>, or LINA_G
           sessionId: this.id,
           reaEnabled: settings.reaEnabled,
           ...(this.cfg.mode === 'parallel' ? { participants: this.participants() } : {}),
-          prompt: [spec.prompt, this.state.goalRecoveryContext, P.conversationContext(cwd, this.deps.db.recentConversation(this.id, agent)
+          prompt: [spec.prompt, this.state.takeoverContext, this.state.goalRecoveryContext, P.conversationContext(cwd, this.deps.db.recentConversation(this.id, agent)
             .filter((message) => !this.competing || phase !== 'implementing' || message.agent === 'user' || message.agent === agent)), this.state.undoNotice].filter(Boolean).join('\n\n'),
           cwd,
           model: choice.model,
@@ -2201,6 +2252,7 @@ Use LINA_GOAL_COMPLETE, LINA_GOAL_CONTINUE: <remaining in-scope work>, or LINA_G
     this.state.goalRecoveryAttempts = 0;
     this.state.goalRecoveryContext = undefined;
     this.persist();
+    if(result.ok&&spec.access==='write')this.state.takeoverContext=undefined;
     return { text: result.text ?? '', result, msgId, model: result.model || choice.model, change, agent };
   }
 

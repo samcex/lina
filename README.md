@@ -453,3 +453,9 @@ The release is checked with unit/integration tests, TypeScript checks and produc
 With the Freebuff CLI installed and logged in, run `/delegate` to let Codex plan, Claude critique, Freebuff implement and address findings, and both Codex and Claude review the actual changes. Then send a task or `/goal <objective>`. The team is preserved for goal workflows. Use `/models freebuff` and `lina doctor` to check availability.
 
 Freebuff is also available through `@freebuff` and the custom team editor. LINA can fall back to it when other installed providers are unavailable. Pending independent reviews resume after usage limits reset. With Freebuff set to `auto`, the supervisors choose and assess a capable model per task from the native picker; manual model pins are respected and the normal CLI preference is restored afterwards. The currently tested CLI does not expose nested worker spawning.
+
+### Transfer the current task
+
+Send `@freebuff take over`, `@codex take over`, or `@claude take over`. LINA transfers implementation of the existing task, preserves files, accepted plans, findings and queued messages, and keeps independent reviewers. Running turns finish before the handoff; paused, cancelled or failed shared tasks continue automatically without a separate `/resume`. To interrupt the current turn for an immediate handoff, use `/interrupt @freebuff take over` (or another provider). Genuine usage limits still apply; a later Pause or Cancel stops continuation.
+
+This is a session handoff for pair, architect, custom and solo workflows. Parallel/compete worktrees must finish integration or candidate selection first. Ordinary `@agent` questions remain consultations.

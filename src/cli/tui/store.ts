@@ -365,7 +365,8 @@ export class TuiStore {
     try {
       const r = await this.client.send(v.session.id, text, interrupt ? { interrupt: true } : {});
       this.set({ busy: undefined });
-      if (r.queued && !interrupt) this.notice('info', 'Queued — the agents will see it at the next turn boundary.');
+      if(r.takeover)this.notice('info',`${AGENT_NAME[r.takeover]} takeover ${r.queued?'scheduled after the current turn':'requested — continuing automatically'}.`);
+      else if (r.queued && !interrupt) this.notice('info', 'Queued — the agents will see it at the next turn boundary.');
     } catch (e) {
       this.set({ busy: undefined });
       this.fail(e, 'Message not sent');

@@ -88,11 +88,12 @@ export interface Api {
    *  - session idle/finished/awaiting_approval → starts a new task (or a revision of the current one)
    *  - session running → queued and delivered at the next turn boundary;
    *    with `interrupt: true` the current turn is cancelled and re-run with the message
-   *  - text beginning with "@codex " / "@claude " → directed to that agent
+   *  - exact @agent take over transfers the existing task at a safe turn boundary and enables continuation
+   *  - text beginning with "@codex " / "@claude " / "@freebuff " → directed to that agent
    */
   'POST /api/sessions/:id/messages': {
     body: { text: string; attachments?: string[]; interrupt?: boolean };
-    res: { ok: true; queued: boolean };
+    res: { ok: true; queued: boolean; takeover?: AgentId };
   };
   /** Upload raw bytes; headers: x-filename, content-type. Returns attachment to reference by id. */
   'POST /api/sessions/:id/attachments': { res: Attachment };

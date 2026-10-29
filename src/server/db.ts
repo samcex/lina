@@ -1,6 +1,6 @@
 // SQLite persistence (node:sqlite, synchronous). WAL mode, versioned migrations.
 import { DatabaseSync, type StatementSync } from 'node:sqlite';
-import { byAgent, emptyUsageTotals, type Actor, type AgentId, type AnyLinaEvent, type Attachment, type EventType, type Project, type SearchHit, type Session, type UsageTotals } from '../shared/types.js';
+import { AGENT_IDS, byAgent, emptyUsageTotals, type Actor, type AgentId, type AnyLinaEvent, type Attachment, type EventType, type Project, type SearchHit, type Session, type UsageTotals } from '../shared/types.js';
 
 const MIGRATIONS: string[] = [
   // v1
@@ -248,10 +248,11 @@ export class Db {
     const rows = this.q(`SELECT actor, data FROM (
       SELECT * FROM (SELECT actor, data, seq FROM events WHERE session_id = ? AND type = 'message' AND actor = 'user' AND (json_extract(data, '$.mention') IS NULL OR json_extract(data, '$.mention') = ?) ORDER BY seq DESC LIMIT 4)
       UNION ALL
-      SELECT * FROM (SELECT actor, data, seq FROM events WHERE session_id = ? AND type = 'message' AND actor = 'codex' ORDER BY seq DESC LIMIT 2)
-      UNION ALL
-      SELECT * FROM (SELECT actor, data, seq FROM events WHERE session_id = ? AND type = 'message' AND actor = 'claude' ORDER BY seq DESC LIMIT 2)
-    ) ORDER BY seq ASC`).all(sessionId, recipient, sessionId, sessionId) as Row[];
+      SELECT actor, data, seq FROM (
+        SELECT actor, data, seq, ROW_NUMBER() OVER (PARTITION BY actor ORDER BY seq DESC) AS position
+        FROM events WHERE session_id = ? AND type = 'message' AND actor IN (${AGENT_IDS.map(()=>'?').join(',')})
+      ) WHERE position <= 2
+    ) ORDER BY seq ASC`).all(sessionId, recipient, sessionId, ...AGENT_IDS) as Row[];
     return rows.map((r) => {
       const data = JSON.parse(String(r.data));
       const text = String(data.text ?? '');

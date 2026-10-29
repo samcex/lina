@@ -85,7 +85,7 @@ export class SessionManager {
     this.automaticEnabled = true;
     for (const session of this.db.listSessions()) {
       const state = this.db.getSessionState<RunnerState>(session.id);
-      if (state?.goalRetryAt || state?.goalResumePending || state?.limitRetryPending || state?.deferredReview || (state?.providerLimits && ['failed','completed'].includes(session.status)) || (state?.selfReviewed && state.lastWriters?.main && session.status === 'completed')) this.runner(session.id);
+      if (state?.pendingTakeover || state?.goalRetryAt || state?.goalResumePending || state?.limitRetryPending || state?.deferredReview || (state?.providerLimits && ['failed','completed'].includes(session.status)) || (state?.selfReviewed && state.lastWriters?.main && session.status === 'completed')) this.runner(session.id);
     }
     this.armAutomatic();
   }
@@ -471,7 +471,7 @@ export class SessionManager {
 
   // ── messages ──────────────────────────────────────────────────────────
 
-  async sendMessage(id: string, body: { text: string; attachments?: string[]; interrupt?: boolean }): Promise<{ ok: true; queued: boolean }> {
+  async sendMessage(id: string, body: { text: string; attachments?: string[]; interrupt?: boolean }): Promise<{ ok: true; queued: boolean; takeover?: AgentId }> {
     const r = this.runner(id);
     if (!body || typeof body.text !== 'string' || !body.text.trim()) throw new LinaError('text is required', 'invalid');
     const raw = body.text.trim();
@@ -485,6 +485,13 @@ export class SessionManager {
       const a = this.db.getAttachment(id, String(aid));
       if (!a) throw new LinaError(`Unknown attachment: ${aid}`, 'invalid');
       atts.push(a);
+    }
+    const takeoverMatch=new RegExp(`^@(${AGENT_IDS.join('|')})\\b[:,]?\\s*(?:take\\s*over)(?:\\s+(?:the\\s+|current\\s+)?(?:work|task))?[.!]?\\s*$`,'i').exec(raw);
+    if(takeoverMatch){
+      const agent=takeoverMatch[1].toLowerCase() as AgentId;r.assertTakeover();
+      this.events.append(id,'message','user',{id:rid(),text:raw,kind:'chat',mention:agent,...(atts.length?{attachments:atts}:{})});
+      const queued=r.requestTakeover(agent,atts);if(body.interrupt&&r.busy)r.interrupt();
+      return {ok:true,queued,takeover:agent};
     }
     const msgId = rid();
     const status = r.session.status;
