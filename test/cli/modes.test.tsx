@@ -4,7 +4,7 @@ import { render, renderToString } from 'ink';
 import { PassThrough, Writable } from 'node:stream';
 import { LinaApiError } from '../../src/shared/client.js';
 import { viewFromSnapshot } from '../../src/shared/reducer.js';
-import { AGENT_IDS, type AnyLinaEvent, type Candidate, type Finding, type Session, type SessionSnapshot, type TestRun } from '../../src/shared/types.js';
+import { AGENT_IDS, type AnyLinaEvent, type Candidate, type Finding, type Session, type SessionSnapshot, type TestRun, type TeamConfig } from '../../src/shared/types.js';
 import { stripAnsi } from '../../src/cli/ansi.js';
 import { buildTranscript, candidateComparison, renderEvent } from '../../src/cli/transcript.js';
 import { agentScopes, headerLines, pipelineRail, railFor } from '../../src/cli/tui/chrome.js';
@@ -173,10 +173,11 @@ describe('chrome: modes v2', () => {
     const modes = text(modePickerLines('compete', 4, 100));
     for (const s of ['pair', 'Developer + Reviewer', 'parallel', 'The lead splits the task', '● compete', 'Competition', 'custom', 'Custom team']) expect(modes).toContain(s);
     const t0 = { planner: 'codex', planCritic: 'claude', developer: 'codex', reviewers: ['claude'] } as const;
-    const t1 = cycleTeam({ ...t0, reviewers: ['claude'] }, 3, 1);
+    const t1 = cycleTeam(cycleTeam({ ...t0, reviewers: ['claude'] }, 3, 1), 3, 1);
     expect(t1.reviewers).toEqual(['codex', 'claude']);
     expect(cycleTeam(t1, 0, 1).planner).toBe('claude');
-    expect(cycleTeam(cycleTeam(t1, 0, 1), 0, 1).planner).toBeNull();
+    expect(cycleTeam(cycleTeam(t1, 0, 1), 0, 1).planner).toBe('freebuff');
+    expect(cycleTeam(cycleTeam(cycleTeam(t1, 0, 1), 0, 1), 0, 1).planner).toBeNull();
     const lines = text(teamPickerLines(t1, 0, 100));
     expect(lines).toContain('Review              ‹ Codex + Claude ›');
     expect(lines).toContain('Planning (Codex) › Plan review (Claude) › Implementing (Codex) › Testing › Reviewing (Codex, Claude)');
@@ -355,4 +356,14 @@ describe('App: modes v2 commands', () => {
       store.dispose();
     }
   });
+});
+
+it('offers Freebuff in every team role and every supported reviewer pairing',()=>{
+ const initial={planner:'codex',planCritic:'claude',developer:'codex',reviewers:['codex']} as TeamConfig;
+ for(const [row,key] of [[0,'planner'],[1,'planCritic'],[2,'developer']] as const){
+  let team=initial;const found=new Set<unknown>();for(let n=0;n<5;n++){found.add(team[key]);team=cycleTeam(team,row,1);}
+  expect(found.has('freebuff')).toBe(true);
+ }
+ let team=initial;const options:string[]=[];for(let n=0;n<7;n++){options.push([...team.reviewers].sort().join('+'));team=cycleTeam(team,3,1);}
+ for(const option of ['freebuff','codex+freebuff','claude+freebuff','claude+codex'])expect(options).toContain(option);
 });

@@ -1,3 +1,4 @@
+import { panelAgentsFor } from '../team.js';
 // The LINA terminal UI: header, transcript, live agent panels, composer, overlays.
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Box, Text, useAnimation, useInput, usePaste, useWindowSize } from 'ink';
@@ -98,12 +99,11 @@ export function App({ store, cwd, initial, onQuit, openUrl, size }: AppProps) {
   const models: Partial<Record<AgentId, AgentModelChoice>> = { ...(st.settings?.models ?? {}), ...(cfg.models ?? {}) };
   const developer: AgentId = cfg.developer ?? st.settings?.developer ?? 'codex';
   const mode = cfg.mode ?? st.settings?.defaultMode;
-  // The two side panels show this session's developer and reviewer, whoever they are.
+  // Assign roles independently from the persistent configured-provider panels.
   const primaryAgent: AgentId = mode === 'custom' && cfg.team ? cfg.team.developer : developer;
   const configuredReviewer: AgentId = mode === 'custom' && cfg.team
     ? (cfg.team.reviewers[0] ?? peerOf(primaryAgent))
     : (cfg.reviewer ?? peerOf(primaryAgent));
-  const secondAgent: AgentId = configuredReviewer === primaryAgent ? peerOf(primaryAgent) : configuredReviewer;
   const agents: Record<AgentId, AgentView> = view?.agents ?? byAgent(() => idleAgent());
   const anyActive = AGENT_IDS.some((a) => isActive(agents[a].status));
   const hasStreams = !!view && Object.keys(view.streams).length > 0;
@@ -134,12 +134,8 @@ export function App({ store, cwd, initial, onQuit, openUrl, size }: AppProps) {
   suggestionLines = Math.min(suggestionLines, Math.max(0, rows - 3 - comp.lines.length - (rows < 10 ? 1 : 2) - 1 - (banner ? 1 : 0) - 1));
   const layout = computeLayout({ columns, rows, composerLines: comp.lines.length, suggestionLines, bannerLines: banner ? 1 : 0 });
   const mainHeight = layout.wide ? layout.transcriptHeight : layout.transcriptHeight + layout.compactRowHeight;
-  // Live panels: every agent of a parallel team, else the session's developer and reviewer.
-  const panelAgents: AgentId[] = mode === 'parallel' && cfg.participants?.length
-    ? [...new Set([cfg.developer ?? developer, ...cfg.participants])]
-    : mode === 'custom' && cfg.team
-      ? [...new Set([cfg.team.developer, cfg.team.planner, cfg.team.planCritic, ...cfg.team.reviewers].filter((a): a is AgentId => !!a))]
-      : [primaryAgent, secondAgent];
+  // A fallback provider remains visible even when it has no assigned team role.
+  const panelAgents = panelAgentsFor({ ...cfg, developer, reviewer: configuredReviewer }, models);
   const panelHeights = panelAgents.map((_, i) => i === panelAgents.length - 1
     ? mainHeight - Math.floor(mainHeight / panelAgents.length) * (panelAgents.length - 1)
     : Math.floor(mainHeight / panelAgents.length));
@@ -452,10 +448,10 @@ export function App({ store, cwd, initial, onQuit, openUrl, size }: AppProps) {
   const header = headerLines({ width: columns, projectName: st.project?.name, view, models, developer, mode, config: { ...cfg, mode, team: cfg.team ?? (mode === 'custom' ? st.settings?.team : undefined) }, maxRounds: cfg.maxRounds, conn: st.conn, everOpen: st.everOpen, mock: !!cfg.mock });
   const roleOf = (a: AgentId): Role | undefined => {
     if (agents[a].role) return agents[a].role;
-    if (mode === 'compete' || mode === 'parallel') return 'developer'; // both build (each in its own worktree)
+    if (mode === 'compete' || mode === 'parallel') return (cfg.participants ?? [developer, configuredReviewer]).includes(a) ? 'developer' : undefined; // both build (each in its own worktree)
     const team = cfg.team ?? (mode === 'custom' ? st.settings?.team : undefined);
     if (mode === 'custom' && team) return team.developer === a ? 'developer' : team.reviewers.includes(a) ? 'reviewer' : undefined;
-    return mode === 'solo' && a !== developer ? undefined : a === developer ? 'developer' : 'reviewer';
+    return a === developer ? 'developer' : mode !== 'solo' && a === configuredReviewer ? 'reviewer' : undefined;
   };
   const scopes = useMemo(() => agentScopes(view), [view?.timeline, view?.session.config.mode]);
   const panel = (a: AgentId, width: number, height: number, compact = false) => (

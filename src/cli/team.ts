@@ -6,6 +6,15 @@ import { AGENT_NAME } from './theme.js';
 
 const AGENT_LIST: AgentId[] = AGENT_IDS;
 
+/** Stable panel positions include configured fallback agents, even outside the current team. */
+export const PANEL_AGENT_ORDER: AgentId[] = ['codex', 'freebuff', 'claude'];
+export function panelAgentsFor(cfg: Partial<SessionConfig>, models: Partial<SessionConfig['models']> | undefined = cfg.models): AgentId[] {
+  const team = cfg.team;
+  const present = new Set([cfg.developer, cfg.reviewer, ...(cfg.participants ?? []), team?.developer, team?.planner, team?.planCritic, ...(team?.reviewers ?? []), ...Object.keys(models ?? {})]);
+  return PANEL_AGENT_ORDER.filter(a => present.has(a));
+}
+
+
 export type TeamKey = 'plan' | 'critic' | 'dev' | 'review';
 export const TEAM_KEYS: TeamKey[] = ['plan', 'critic', 'dev', 'review'];
 
@@ -163,7 +172,7 @@ export function roleTags(agent: AgentId, cfg: Pick<SessionConfig, 'mode' | 'deve
   const mode: Mode = cfg.mode;
   if (mode === 'compete') return 'rival';
   if (mode === 'parallel') return agent === cfg.developer ? 'lead' : 'part';
-  if (mode !== 'custom') return agent === cfg.developer ? 'dev' : mode === 'solo' ? 'idle' : 'rev';
+  if (mode !== 'custom') return agent === cfg.developer ? 'dev' : mode === 'solo' || agent !== cfg.reviewer ? 'idle' : 'rev';
   const t = teamOf(cfg);
   const tags: string[] = [];
   if (t.planner === agent) tags.push('plan');

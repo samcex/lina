@@ -1,3 +1,4 @@
+import { PANEL_AGENT_ORDER } from '../team.js';
 // Full-area overlays. Each one owns its keys while mounted (App's input is inactive).
 import React, { useMemo, useRef, useState } from 'react';
 import { Box, Text, useInput } from 'ink';
@@ -218,16 +219,15 @@ export function liveAgentLines(view: SessionView, agent: AgentId, o: LiveOptions
   return { lines: lines.map((l) => truncateAnsi(l, w)), items };
 }
 
-/** Side-by-side columns (wide) or stacked blocks of both agents. */
+/** Side-by-side columns (wide) or stacked blocks of every provider. */
 export function liveAllLines(view: SessionView, o: Omit<LiveOptions, 'selected' | 'expanded'>): string[] {
   if (o.width >= 100) {
-    const cw = Math.floor((o.width - 3) / 2);
-    const cols = AGENT_IDS.map((a) => liveAgentLines(view, a, { ...o, width: cw }).lines);
-    const n = Math.max(...cols.map((c) => c.length));
-    return Array.from({ length: n }, (_, i) => padAnsi(cols[0][i] ?? '', cw) + ' ' + fg(C.border)('│') + ' ' + (cols[1][i] ?? ''));
+    const gap = 3;
+    const cw = Math.floor((o.width - gap * (PANEL_AGENT_ORDER.length - 1)) / PANEL_AGENT_ORDER.length);
+    const cols = PANEL_AGENT_ORDER.map(a => liveAgentLines(view, a, {...o, width: cw}).lines);
+    return Array.from({length: Math.max(...cols.map(c=>c.length))}, (_,i) => cols.map(c=>padAnsi(c[i]??'',cw)).join(' '+fg(C.border)('│')+' '));
   }
-  const [x, y] = AGENT_IDS.map((a) => liveAgentLines(view, a, o).lines);
-  return [...x, '', fg(C.border)('─'.repeat(o.width)), ...y];
+  return PANEL_AGENT_ORDER.flatMap((a,i) => [...(i ? ['',fg(C.border)('─'.repeat(o.width))] : []), ...liveAgentLines(view,a,o).lines]);
 }
 
 export function LiveOverlay({ store, width, height, onClose, frame, now, agent }: Common & { frame: number; now: number; agent?: AgentId }) {
@@ -847,10 +847,10 @@ export function ModeOverlay({ store, width, height, onClose, onTeam }: Common & 
 // ── team picker (custom mode) ─────────────────────────────────────────────────
 type TeamRow = { key: 'planner' | 'planCritic' | 'developer' | 'reviewers'; label: string; options: (AgentId | null | AgentId[])[] };
 const TEAM_ROWS: TeamRow[] = [
-  { key: 'planner', label: 'Plan', options: ['codex', 'claude', null] },
-  { key: 'planCritic', label: 'Critique the plan', options: ['codex', 'claude', null] },
-  { key: 'developer', label: 'Implement', options: ['codex', 'claude'] },
-  { key: 'reviewers', label: 'Review', options: [['codex'], ['claude'], ['codex', 'claude'], []] },
+  { key: 'planner', label: 'Plan', options: [...AGENT_IDS, null] },
+  { key: 'planCritic', label: 'Critique the plan', options: [...AGENT_IDS, null] },
+  { key: 'developer', label: 'Implement', options: [...AGENT_IDS] },
+  { key: 'reviewers', label: 'Review', options: [...AGENT_IDS.map(a => [a]), ...AGENT_IDS.flatMap((a, i) => AGENT_IDS.slice(i+1).map(b => [a,b])), []] },
 ];
 
 function teamValueLabel(v: AgentId | null | AgentId[]): string {
@@ -862,8 +862,9 @@ function teamValueLabel(v: AgentId | null | AgentId[]): string {
 /** Cycles one row of the team by `dir` (±1). */
 export function cycleTeam(team: TeamConfig, row: number, dir: number): TeamConfig {
   const r = TEAM_ROWS[row];
-  const cur = JSON.stringify(team[r.key]);
-  const i = r.options.findIndex((o) => JSON.stringify(o) === cur);
+  const valueKey = (v: AgentId | null | AgentId[]) => JSON.stringify(Array.isArray(v) ? [...v].sort() : v);
+  const cur = valueKey(team[r.key]);
+  const i = r.options.findIndex(o => valueKey(o) === cur);
   const next = r.options[(Math.max(0, i) + dir + r.options.length) % r.options.length];
   return { ...team, [r.key]: next } as TeamConfig;
 }
@@ -875,6 +876,7 @@ export function teamPickerLines(team: TeamConfig, sel: number, width: number): s
     const line = `${padAnsi(fg(C.text)(r.label), 20)}${dim('‹ ')}${teamValueLabel(v as AgentId | null | AgentId[])}${dim(' ›')}`;
     out.push(i === sel ? bg('#2E2645')(padAnsi(fg(C.lina)('▸ ') + line, width)) : '  ' + line);
   });
+  out.push(...wrapAnsi(dim('Available: ') + PANEL_AGENT_ORDER.map(a=>fg(actorColor(a))(AGENT_NAME[a])).join(dim(' · ')), width));
   out.push('');
   const rv = rolesForTeam(team);
   const steps = pipelineFor({ mode: 'custom', developer: rv.developer, reviewer: rv.reviewer, team }).map((p) => {

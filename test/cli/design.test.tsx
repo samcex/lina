@@ -1,3 +1,4 @@
+import { panelAgentsFor } from '../../src/cli/team.js';
 import { DELEGATION_TEAM } from '../../src/shared/types.js';
 import React from 'react';
 import { PassThrough, Writable } from 'node:stream';
@@ -9,7 +10,7 @@ import { applyEvent, viewFromSnapshot } from '../../src/shared/reducer.js';
 import { stripAnsi, strWidth } from '../../src/cli/ansi.js';
 import { computeLayout } from '../../src/cli/layout.js';
 import { footerControls, panelLines, panelUpdate } from '../../src/cli/tui/chrome.js';
-import { liveAgentLines } from '../../src/cli/tui/overlays.js';
+import { liveAgentLines, liveAllLines } from '../../src/cli/tui/overlays.js';
 import { installMouse } from '../../src/cli/tui/mouse.js';
 import { parseSlash } from '../../src/cli/slash.js';
 import { project, snapshot } from './fixture.js';
@@ -89,4 +90,25 @@ it.each([[80,24],[140,40]])('shows all three delegation roles at %i columns', (c
   expect(Math.max(...text.split('\n').map(strWidth))).toBeLessThanOrEqual(columns);
   expect(text.split('\n').length).toBeLessThanOrEqual(rows);
  }finally{store.dispose();}
+});
+
+it.each([[80,24],[140,40]])('keeps configured Freebuff between Codex and Claude outside the current team at %i columns',(columns,rows)=>{
+ const snap=snapshot();snap.session.config={...snap.session.config,mode:'custom',developer:'claude',reviewer:'codex',team:{planner:'claude',planCritic:'codex',developer:'claude',reviewers:['codex']}};
+ const view=viewFromSnapshot(snap);const store=new TuiStore({sessions:async()=>[]} as unknown as ClientLike,{view,project,live:false});
+ try{
+  const text=stripAnsi(renderToString(<App store={store} cwd="/tmp" onQuit={()=>{}} size={{columns,rows}} />,{columns}));
+  for(const name of ['Codex','Freebuff','Claude'])expect(text).toContain(name);
+  expect(Math.max(...text.split('\n').map(strWidth))).toBeLessThanOrEqual(columns);
+  expect(text.split('\n').length).toBeLessThanOrEqual(rows);
+ }finally{store.dispose();}
+});
+
+it.each([80,140])('includes Freebuff in the all-agent activity view at %i columns',width=>{
+ const lines=liveAllLines(detailed(),{width,frame:0,now:Date.now(),updateRows:6});
+ const text=stripAnsi(lines.join('\n'));for(const name of ['Codex','Freebuff','Claude'])expect(text).toContain(name);
+ expect(Math.max(...lines.map(strWidth))).toBeLessThanOrEqual(width);
+});
+
+it('retains the requested panel order when Freebuff is only a configured fallback',()=>{
+ expect(panelAgentsFor({mode:'custom',developer:'claude',reviewer:'codex',team:{planner:'claude',planCritic:'codex',developer:'claude',reviewers:['codex']}},{codex:{model:'codex'},claude:{model:'claude'},freebuff:{model:'auto'}})).toEqual(['codex','freebuff','claude']);
 });

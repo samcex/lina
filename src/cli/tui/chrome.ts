@@ -1,4 +1,4 @@
-import { AGENT_IDS } from '../../shared/types.js';
+import { panelAgentsFor } from '../team.js';
 // Pure line builders for the TUI chrome: header, agent panels, composer, footer.
 import type { AgentView, SessionView } from '../../shared/reducer.js';
 import { PIPELINE, PHASE_LABEL, STATUS_LABEL, pipelineFor } from '../../shared/reducer.js';
@@ -92,10 +92,9 @@ export function headerLines(h: HeaderInput): string[] {
   const c = h.config ?? {};
   const cfg: Pick<SessionConfig, 'mode' | 'developer' | 'reviewer' | 'team' | 'workspaceMode' | 'interactionMode'> = { mode: c.mode ?? h.mode ?? 'pair', developer: c.developer ?? h.developer, reviewer: c.reviewer ?? reviewer, team: c.team, workspaceMode: view?.session.config.workspaceMode ?? c.workspaceMode, interactionMode: view?.session.config.interactionMode ?? c.interactionMode };
   const m = (a: AgentId) => `${fg(actorColor(a))(a)} ${fg(C.text)(modelLabel(h.models[a]))}${dim(' ' + roleTags(a, cfg))}`;
-  const first: AgentId = cfg.mode === 'custom' && cfg.team ? cfg.team.developer : h.developer;
-  const shown = cfg.mode === 'custom' && cfg.team
-    ? [...new Set([first, cfg.team.planner, cfg.team.planCritic, ...cfg.team.reviewers].filter((a): a is AgentId => !!a))]
-    : [first, ...AGENT_IDS.filter(a => a !== first).slice(0, 1)];
+  const first = cfg.mode === 'custom' && cfg.team ? cfg.team.developer : h.developer;
+  const configured = panelAgentsFor(cfg, h.models);
+  const shown = configured.includes('freebuff') ? configured : [first, ...configured.filter(a=>a!==first)];
   const models = shown.map(m).join('  ');
   const round = view && view.round > 0 ? fg(C.muted)(`round ${view.round}/${view.session.config.maxRounds ?? h.maxRounds ?? '?'}`) : '';
   const chosen = view?.session.chosenVariant;
