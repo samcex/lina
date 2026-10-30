@@ -114,3 +114,5 @@ Explicit `@codex take over`, `@claude take over` and `@freebuff take over` comma
 Freebuff may persist a long pasted prompt as an attachment with an empty user message and `(empty chat)` title. LINA recognizes these turns by their unique delegated-turn UUID in the new chat's persisted history, so completed work is not mistaken for a startup timeout. Pre-existing chats and different turn IDs cannot satisfy this fallback.
 
 Freebuff picker navigation waits for the highlighted model to actually change before checking for a wrap. Slow redraws cannot masquerade as an unavailable model. Composer, picker and selection confirmation have bounded readiness waits; unresponsive UI failures are transient and recover automatically, while a fully scanned missing or paid-only model remains a model availability error.
+
+On resumed interrupted chats, Freebuff may leave `/model` in the composer after the first Enter. LINA retries submission only when the exact command is still visibly pending, with a two-retry bound. It never resubmits Enter on an open picker or for other draft text.

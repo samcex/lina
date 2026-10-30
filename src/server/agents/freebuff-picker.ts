@@ -69,7 +69,19 @@ export async function operatePicker(screen:FreebuffScreen,write:(s:string)=>unkn
  };
  if(!await waitFor(()=>screen.text().includes('/model to change'),15000))throw new FreebuffPickerError('Freebuff composer did not become ready for model selection');
  write('/model');await sleep(350);check();write('\r');
- if(!await waitFor(()=>!!parsePicker(screen.text()).focused,10000))throw new FreebuffPickerError('Freebuff model picker did not become ready');
+ // Restoring a long interrupted chat can consume the first Enter or redraw over
+ // command submission. Retry only the exact command still visibly in the input;
+ // never press Enter on an open picker (which could select an unintended model).
+ let commandRetries=0,lastEnter=Date.now();
+ if(!await waitFor(()=>{
+  const text=screen.text();
+  if(parsePicker(text).focused)return true;
+  const pending=/^\s*[│┃]\s*\/model[ ▍█▋▎▏]*[│┃]?\s*$/m.test(text);
+  if(pending&&!text.includes('Enter select')&&commandRetries<2&&Date.now()-lastEnter>=750){
+   check();write('\r');commandRetries++;lastEnter=Date.now();
+  }
+  return false;
+ },10000))throw new FreebuffPickerError('Freebuff model picker did not become ready');
  const found=new Map<string,FreebuffModelRow>();const visited=new Set<string>();
  try {
   for(let i=0;i<80;i++){

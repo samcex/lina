@@ -72,3 +72,31 @@ it('reports an unresponsive picker instead of inventing a missing-model setup fa
   await vi.advanceTimersByTimeAsync(3500);await assertion;
  }finally{vi.useRealTimers();}
 });
+
+it('resubmits an exact /model draft when restoring history consumes the first Enter',async()=>{
+ vi.useFakeTimers();let state='Fast Coder · /model to change',enters=0;
+ const fake={text:()=>state} as FreebuffScreen;
+ const write=(key:string)=>{
+  if(key==='/model')state='│ /model▍ │\nFast Coder · /model to change';
+  if(key==='\r'){
+   enters++;
+   if(enters===2)state=screen;
+   if(enters===3)state='Fast Coder · /model to change';
+  }
+ };
+ try{
+  const result=operatePicker(fake,write,new AbortController().signal,'picker:fast-coder');
+  await vi.advanceTimersByTimeAsync(1600);
+  expect((await result)[0].id).toBe('picker:fast-coder');expect(enters).toBe(3);
+ }finally{vi.useRealTimers();}
+});
+it('never resubmits Enter for arbitrary input while the picker is opening',async()=>{
+ vi.useFakeTimers();let state='Fast Coder · /model to change',enters=0;
+ const fake={text:()=>state} as FreebuffScreen;
+ const write=(key:string)=>{if(key==='\r'){enters++;state='│ /model extra draft▍ │\nFast Coder · /model to change';}};
+ try{
+  const result=operatePicker(fake,write,new AbortController().signal,'picker:fast-coder');
+  const assertion=expect(result).rejects.toThrow('did not become ready');
+  await vi.advanceTimersByTimeAsync(11000);await assertion;expect(enters).toBe(1);
+ }finally{vi.useRealTimers();}
+});
