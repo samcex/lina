@@ -52,6 +52,7 @@ export interface QueuedMessage {
 interface DeferredReview { at: number; base: string; reviewer: AgentId; writer: AgentId; next?: DeferredReview }
 
 export interface RunnerState {
+  freebuffTimeSlices?: {key:string;count:number};
   pendingTakeover?: {agent:AgentId;at:number;attachments?:Attachment[]};
   takeoverContext?: string;
   freebuffModelDecision?: {key:string;model:string;reason:string;proposedBy?:AgentId;reviewedBy?:AgentId};
@@ -2224,6 +2225,23 @@ Use LINA_GOAL_COMPLETE, LINA_GOAL_CONTINUE: <remaining in-scope work>, or LINA_G
       this.notice(`${agent} is unavailable: ${result.error!.message}${result.error?.hint ? ' '+result.error.hint : ''} The other provider can continue; LINA will recheck availability automatically.`);
       throw new ProviderLimited(agent,result.error!.message,result.text,change?.files.map(f=>f.path),undefined,'configuration');
     }
+    // A productive long goal reaching its configured turn boundary is not a broken
+    // provider context. Resume the saved native chat before falling back, bounded
+    // per task/phase so a provider stuck at the same boundary cannot loop forever.
+    const freebuffSliceKey=JSON.stringify([key,this.state.task,phase]);
+    if (!result.ok && this.cfg.goal && agent === 'freebuff' && result.error?.code === 'timeout' && result.providerSessionId && result.durationMs >= settings.turnTimeoutMs - 500) {
+      const count=this.state.freebuffTimeSlices?.key===freebuffSliceKey?this.state.freebuffTimeSlices.count:0;
+      if(count<2){
+        if(this.pauseRequested||this.state.automaticDisabled)throw new Halt('interrupt');
+        this.state.freebuffTimeSlices={key:freebuffSliceKey,count:count+1};
+        this.state.goalRecoveryContext=`Freebuff reached the configured turn time limit. Continue from the saved native conversation and current files. Inspect existing background builds and their logs before launching another build. Preserve edits and completed actions; finish remaining validation and report the outcome.`;
+        this.state.goalResumePending=true;this.state.goalRetryAt=Date.now()+1000;
+        this.notice(`Freebuff reached the configured turn time limit. Saved work is preserved; continuing Freebuff automatically (${count+1}/2) without switching providers.`);
+        this.agentStatus(agent,'waiting', 'Continuing after turn time limit',role);this.persist();
+        throw new Halt('error');
+      }
+    }
+    if(result.ok&&agent==='freebuff'&&this.state.freebuffTimeSlices?.key===freebuffSliceKey)this.state.freebuffTimeSlices=undefined;
     const recoverable = !result.ok && (result.error?.code === 'transient' || (this.cfg.goal && ['timeout','crashed','internal'].includes(result.error?.code ?? 'internal')));
     if (recoverable) {
       // A broken or exhausted provider context must not make every future retry fail identically.

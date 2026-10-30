@@ -582,6 +582,9 @@ export class FreebuffAdapter implements AgentAdapter {
     if (opts.signal.aborted) {
       return { ok: false, ...base, error: classifyError('freebuff', '', { aborted: true }) };
     }
+    // SIGTERM can persist [response interrupted] while the hard timer stops the CLI.
+    // The process timeout is authoritative, not the shutdown transcript.
+    if (proc.timedOut || (outcome !== 'complete' && Date.now() >= deadline)) outcome = 'timeout';
     if (outcome === 'complete') {
       try { onEvent({ t: 'usage', usage: base.usage }); } catch { /* ignore */ }
       return { ok: true, ...base };
@@ -600,7 +603,7 @@ export class FreebuffAdapter implements AgentAdapter {
       procError.hint = 'Freebuff\'s free hours are used up (the CLI shows the reset time). Wait for them to reset, use another agent, or check https://freebuff.com/plans.';
     } else if (outcome === 'timeout') {
       procError = classifyError('freebuff', '', { timedOut: 'turn' });
-      procError.hint = 'Freebuff is interactive and may be waiting for input (login, ads, or a permission prompt). Open `freebuff` in this project once, clear any prompts, then retry.';
+      procError.hint = 'The configured turn time limit ended this turn. Existing files are preserved; autonomous goals with a saved conversation continue automatically. Resume a stopped session when ready.';
     } else if (outcome === 'idle') {
       procError = classifyError('freebuff', '', { timedOut: 'idle' });
       procError.hint = 'Freebuff stopped writing to its chat log. It may be waiting for input or out of free session hours; open `freebuff` in this project to check.';
