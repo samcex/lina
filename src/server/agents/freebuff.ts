@@ -1,4 +1,4 @@
-import { FreebuffScreen, operatePicker, preserveModelPreference, withFreebuffLock, freebuffCatalogue } from './freebuff-picker.js';
+import { FreebuffPickerError, FreebuffScreen, operatePicker, preserveModelPreference, withFreebuffLock, freebuffCatalogue } from './freebuff-picker.js';
 import { randomUUID } from 'node:crypto';
 // Freebuff adapter: drives the interactive `freebuff` TUI through a pseudo-terminal
 // and reads the structured chat log the CLI itself persists under its config dir.
@@ -437,7 +437,7 @@ export class FreebuffAdapter implements AgentAdapter {
     const screen = new FreebuffScreen();
     const preference = preserveModelPreference(freebuffConfigDir());
     let selectedModel: string | undefined;
-    let selectionError: string | undefined;
+    let selectionError: TurnError | undefined;
     let selectionAttempted = false;
     let ready = false;
     let screenTail = '';
@@ -488,7 +488,7 @@ export class FreebuffAdapter implements AgentAdapter {
           const picked=await operatePicker(screen,writeStdin,controller.signal,opts.model);
           selectedModel=picked[0]?.label;
           emit([{t:'started',model:selectedModel}]);
-        } catch(e) {selectionError=(e as Error).message;}
+        } catch(e) {selectionError={code:e instanceof FreebuffPickerError?e.code:'transient',message:(e as Error).message};}
         finally {preference();selectionAttempted=true;}
       }
       while (!selectionError && Date.now() < deadline) {
@@ -578,7 +578,7 @@ export class FreebuffAdapter implements AgentAdapter {
       durationMs,
     };
 
-    if (selectionError && !opts.signal.aborted) return {ok:false,...base,error:{code:'model_unavailable',message:selectionError}};
+    if (selectionError && !opts.signal.aborted) return {ok:false,...base,error:selectionError};
     if (opts.signal.aborted) {
       return { ok: false, ...base, error: classifyError('freebuff', '', { aborted: true }) };
     }

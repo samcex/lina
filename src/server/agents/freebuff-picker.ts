@@ -57,27 +57,48 @@ export function preserveModelPreference(root:string):()=>void{
  };
  return restore;
 }
-export async function operatePicker(screen:FreebuffScreen,write:(s:string)=>unknown,signal:AbortSignal,requested?:string):Promise<FreebuffModelRow[]>{
- const check=()=>{if(signal.aborted)throw new Error('Freebuff model selection cancelled');};
- for(let i=0;i<100&&!screen.text().includes('/model to change');i++){check();await sleep(100);}
- check();write('/model');await sleep(350);write('\r');
- for(let i=0;i<100&&!parsePicker(screen.text()).focused;i++){check();await sleep(100);}
- const found=new Map<string,FreebuffModelRow>();const visited=new Set<string>();
- for(let i=0;i<80;i++){
-  check();const parsed=parsePicker(screen.text());for(const row of parsed.rows)found.set(row.id,row);
-  if(!parsed.focused){if(process.env.LINA_FREEBUFF_PICKER_DEBUG)writeFileSync(process.env.LINA_FREEBUFF_PICKER_DEBUG,screen.text());break;}
-  const selected=found.get(parsed.focused)!;
-  if(requested===selected.id){
-   if(selected.locked)throw new Error(`Freebuff model ${selected.label} requires a paid plan`);
-   write('\r');
-   for(let n=0;n<50;n++){check();await sleep(100);const text=screen.text();if(!text.includes('Enter select')&&text.split('\n').some(l=>l.trim().startsWith(selected.label+' ')&&l.includes('/model to change')))return [selected];}
-   throw new Error(`Freebuff did not confirm selected model ${selected.label}`);
-  }
-  if(visited.has(parsed.focused))break;visited.add(parsed.focused);write('\x1b[B');await sleep(160);
- }
- write('\x1b');if(requested)throw new Error(`Freebuff model ${requested} is not currently selectable`);
- return [...found.values()];
+export class FreebuffPickerError extends Error {
+ constructor(message:string,readonly code:'transient'|'model_unavailable'='transient'){super(message);}
 }
+export async function operatePicker(screen:FreebuffScreen,write:(s:string)=>unknown,signal:AbortSignal,requested?:string):Promise<FreebuffModelRow[]>{
+ const check=()=>{if(signal.aborted)throw new FreebuffPickerError('Freebuff model selection cancelled');};
+ const waitFor=async(test:()=>boolean,ms:number)=>{
+  const end=Date.now()+ms;
+  while(Date.now()<end){check();if(test())return true;await sleep(50);}
+  check();return test();
+ };
+ if(!await waitFor(()=>screen.text().includes('/model to change'),15000))throw new FreebuffPickerError('Freebuff composer did not become ready for model selection');
+ write('/model');await sleep(350);check();write('\r');
+ if(!await waitFor(()=>!!parsePicker(screen.text()).focused,10000))throw new FreebuffPickerError('Freebuff model picker did not become ready');
+ const found=new Map<string,FreebuffModelRow>();const visited=new Set<string>();
+ try {
+  for(let i=0;i<80;i++){
+   check();const parsed=parsePicker(screen.text());for(const row of parsed.rows)found.set(row.id,row);
+   if(!parsed.focused)throw new FreebuffPickerError('Freebuff model picker lost its selection');
+   const selected=found.get(parsed.focused)!;
+   if(requested===selected.id){
+    if(selected.locked)throw new FreebuffPickerError(`Freebuff model ${selected.label} requires a paid plan`,'model_unavailable');
+    write('\r');
+    if(await waitFor(()=>{const text=screen.text();return !text.includes('Enter select')&&text.split('\n').some(l=>l.trim().startsWith(selected.label+' ')&&l.includes('/model to change'));},5000))return [selected];
+    throw new FreebuffPickerError(`Freebuff did not confirm selected model ${selected.label}`);
+   }
+   if(visited.has(parsed.focused))break;
+   visited.add(parsed.focused);write('\x1b[B');
+   // A redraw can take longer than a fixed sleep, especially in resumed chats.
+   // Only a positively observed focus change can count as advancing/wrapping.
+   if(!await waitFor(()=>{const focus=parsePicker(screen.text()).focused;return !!focus&&focus!==parsed.focused;},2500)){
+    if(!requested)return [...found.values()]; // Discovery may stop at a non-model control.
+    throw new FreebuffPickerError('Freebuff model picker did not respond to navigation');
+   }
+  }
+  if(requested)throw new FreebuffPickerError(`Freebuff model ${requested} is not currently selectable`,'model_unavailable');
+  return [...found.values()];
+ } finally {
+  if(screen.text().includes('Enter select'))write('\x1b');
+  if(process.env.LINA_FREEBUFF_PICKER_DEBUG)writeFileSync(process.env.LINA_FREEBUFF_PICKER_DEBUG,screen.text());
+ }
+}
+
 let cache:{key:string;at:number;rows:FreebuffModelRow[]}|undefined;
 export function invalidateFreebuffCatalogue(){cache=undefined;}
 export async function freebuffCatalogue(bin:string,cwd:string,root:string,refresh=false):Promise<FreebuffModelRow[]>{

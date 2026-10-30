@@ -1,7 +1,7 @@
-import {expect,it} from 'vitest';
+import {expect,it,vi} from 'vitest';
 import {mkdtempSync,writeFileSync,readFileSync} from 'node:fs';
 import {join} from 'node:path';import {tmpdir} from 'node:os';
-import {parsePicker,pickerId,preserveModelPreference,withFreebuffLock} from '../../src/server/agents/freebuff-picker.js';
+import {operatePicker,FreebuffScreen,parsePicker,pickerId,preserveModelPreference,withFreebuffLock} from '../../src/server/agents/freebuff-picker.js';
 import {parseModelDecision} from '../../src/server/model-selection.js';
 const screen=` ↑↓ choose model · Tab reasoning · Enter select · Esc cancel
  ┌──────────────────────────────────────────────────────────┐
@@ -42,4 +42,33 @@ it('does not release the model lock until a cancelled active turn finishes clean
  await new Promise(r=>setTimeout(r,5));c.abort();
  const second=withFreebuffLock(next.signal,async()=>{calls.push('next');});
  await Promise.all([first,second]);expect(calls).toEqual(['active','cleaned','next']);
+});
+
+it('waits for a delayed picker redraw before deciding the requested model is absent',async()=>{
+ vi.useFakeTimers();
+ let state=screen;const keys:string[]=[];
+ const fake={text:()=>state} as FreebuffScreen;
+ // Composer first, then the picker. Rendering a key press takes 600ms.
+ state='Fast Coder · /model to change';
+ const write=(key:string)=>{
+  keys.push(key);
+  if(key==='\r'&&!state.includes('Enter select'))state=screen;
+  else if(key==='\x1b[B')setTimeout(()=>{state=screen.replace('› Fast Coder','  Fast Coder').replace('  Frontier','› Frontier').replace('Paid plan','Available');},600);
+  else if(key==='\r')state='Frontier · /model to change';
+ };
+ try{
+  const result=operatePicker(fake,write,new AbortController().signal,'picker:frontier');
+  await vi.advanceTimersByTimeAsync(1500);
+  expect((await result)[0].id).toBe('picker:frontier');expect(keys.filter(k=>k==='\x1b[B')).toHaveLength(1);
+ }finally{vi.useRealTimers();}
+});
+it('reports an unresponsive picker instead of inventing a missing-model setup failure',async()=>{
+ vi.useFakeTimers();let state='Fast Coder · /model to change';
+ const fake={text:()=>state} as FreebuffScreen;
+ const write=(key:string)=>{if(key==='\r')state=screen;};
+ try{
+  const result=operatePicker(fake,write,new AbortController().signal,'picker:missing');
+  const assertion=expect(result).rejects.toMatchObject({code:'transient',message:'Freebuff model picker did not respond to navigation'});
+  await vi.advanceTimersByTimeAsync(3500);await assertion;
+ }finally{vi.useRealTimers();}
 });
